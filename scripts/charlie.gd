@@ -1,11 +1,24 @@
 class_name Charlie
 extends Node2D
-## Player entity: la petite Charlie, a bioluminescent lava-lamp droplet with two little white teeth.
+## Player entity: la petite Charlie, a cohesive 2.5D translucent jiggly slime with two little white teeth.
 
 const LAVA_SHADER_PATH: String = "res://shaders/lava_blob.gdshader"
 const MAX_DROPLETS: int = 3
-const BODY_QUAD_SCALE: float = 5.2
-const BODY_HALF_SCALE: float = 2.6
+const BODY_QUAD_SCALE: float = 3.4
+const BODY_HALF_SCALE: float = 1.7
+
+const LOBE_COUNT: int = 5
+const CORE_BASE_RADIUS: float = 0.46
+const LOBE_MAX_OFFSET: float = 0.44
+const PEARL_MAX_OFFSET: float = 0.34
+const GULP_DURATION: float = 0.38
+
+const LOBE_BASE_RADII: Array[float] = [0.30, 0.29, 0.29, 0.27, 0.27]
+const LOBE_STIFFNESS: Array[float] = [95.0, 115.0, 115.0, 135.0, 135.0]
+const LOBE_DAMPING: Array[float] = [8.5, 9.2, 9.2, 10.5, 10.5]
+const LOBE_MASS: Array[float] = [0.42, 0.34, 0.34, 0.26, 0.26]
+const LOBE_UNIFORM_NAMES: Array[StringName] = [&"lobe_0", &"lobe_1", &"lobe_2", &"lobe_3", &"lobe_4"]
+const PEARL_UNIFORM_NAMES: Array[StringName] = [&"pearl_0", &"pearl_1", &"pearl_2"]
 
 const COLOR_EYE_DARK: Color = Color("#2a1215")
 const COLOR_IRIS_SHEEN: Color = Color(0.95, 0.56, 0.20, 0.68)
@@ -38,9 +51,12 @@ var _body_mat: ShaderMaterial = null
 var _face_overlay: _CharlieFaceOverlay = null
 
 var _time: float = 0.0
-var _stretch: float = 0.0
-var _gulp_wave: float = 0.0
 var _danger_pulse: float = 0.0
+var _invuln_flash: float = 0.0
+var _core_radius: float = CORE_BASE_RADIUS
+var _wobble_amp: float = 0.0
+var _gulp_phase: float = -1.0
+var _gulp_intensity: float = 0.0
 var _blink_cooldown: float = 2.8
 var _blink_phase: float = 0.0
 var _dash_boost_mult: float = 1.0
@@ -48,19 +64,38 @@ var _face_tilt: float = 0.0
 var _pop_scale: float = 0.0
 var _pop_vel: float = 0.0
 var _last_synced_size: float = -1.0
+var _prev_velocity: Vector2 = Vector2.ZERO
+var _prev_facing_angle: float = 0.0
 
 var _palette_core: Color = Color(1.0, 0.78, 0.50, 1.0)
 var _palette_edge: Color = Color(0.96, 0.38, 0.42, 1.0)
 var _palette_glow: Color = Color(1.0, 0.50, 0.28, 1.0)
 
-var _drop_world_pos: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO]
-var _drop_world_vel: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO]
-var _drop_local_uv: Array[Vector2] = [
-	Vector2(-0.55, -0.25),
-	Vector2(-0.62, 0.0),
-	Vector2(-0.55, 0.25),
+# 5 viscous spring-mass lobes in local shader space (0=rear tail, 1/2=flanks, 3/4=front lobes)
+var _lobe_pos: Array[Vector2] = [
+	Vector2(-0.24, 0.0),
+	Vector2(-0.04, -0.24),
+	Vector2(-0.04, 0.24),
+	Vector2(0.20, -0.15),
+	Vector2(0.20, 0.15),
 ]
-var _drop_scales: Array[float] = [1.0, 1.0, 1.0]
+var _lobe_vel: Array[Vector2] = [
+	Vector2.ZERO,
+	Vector2.ZERO,
+	Vector2.ZERO,
+	Vector2.ZERO,
+	Vector2.ZERO,
+]
+var _lobe_rad: Array[float] = [0.30, 0.29, 0.29, 0.27, 0.27]
+
+# 3 internal gelatinous vitality pearls orbiting inside Charlie's translucent belly
+var _pearl_pos: Array[Vector2] = [
+	Vector2(-0.14, -0.10),
+	Vector2(-0.04, 0.16),
+	Vector2(0.14, -0.05),
+]
+var _pearl_vel: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO]
+var _pearl_scales: Array[float] = [1.0, 1.0, 1.0]
 var _prev_droplets_alive: int = MAX_DROPLETS
 
 
@@ -117,7 +152,9 @@ func reset_charlie(pos: Vector2, new_size: float) -> void:
 	position = pos
 	world_size = maxf(new_size, 4.0)
 	velocity = Vector2.ZERO
+	_prev_velocity = Vector2.ZERO
 	facing_angle = 0.0
+	_prev_facing_angle = 0.0
 	look_angle = 0.0
 	invuln_timer = 0.0
 	droplets_alive = MAX_DROPLETS
@@ -129,9 +166,12 @@ func reset_charlie(pos: Vector2, new_size: float) -> void:
 	danger_level = 0.0
 	mouth_open = 0.0
 	blink_amount = 0.0
-	_stretch = 0.0
-	_gulp_wave = 0.0
 	_danger_pulse = 0.0
+	_invuln_flash = 0.0
+	_core_radius = CORE_BASE_RADIUS
+	_wobble_amp = 0.0
+	_gulp_phase = -1.0
+	_gulp_intensity = 0.0
 	_face_tilt = 0.0
 	_pop_scale = 0.0
 	_pop_vel = 0.0
@@ -139,12 +179,20 @@ func reset_charlie(pos: Vector2, new_size: float) -> void:
 	_blink_cooldown = randf_range(2.2, 4.4)
 	_blink_phase = 0.0
 
-	var rest_offsets: Array[Vector2] = _get_droplet_rest_offsets()
+	var rest_lobes: Array[Vector2] = _get_lobe_rest_offsets(0.0, 0.0, 0.0)
+	for i: int in range(LOBE_COUNT):
+		_lobe_pos[i] = rest_lobes[i]
+		_lobe_vel[i] = Vector2.ZERO
+		_lobe_rad[i] = LOBE_BASE_RADII[i]
+
+	var rest_pearls: Array[Vector2] = _get_pearl_orbit_targets()
 	for i: int in range(MAX_DROPLETS):
-		_drop_local_uv[i] = rest_offsets[i]
-		_drop_world_pos[i] = position + rest_offsets[i] * world_size
-		_drop_world_vel[i] = Vector2.ZERO
-		_drop_scales[i] = 1.0
+		_pearl_pos[i] = rest_pearls[i]
+		_pearl_vel[i] = Vector2.ZERO
+		_pearl_scales[i] = 1.0
+
+	if _face_overlay != null:
+		_face_overlay.modulate.a = 1.0
 
 	_sync_body_rect()
 	_update_shader_uniforms({})
@@ -157,8 +205,23 @@ func trigger_chomp(prey_angle: float, intensity: float = 1.0) -> void:
 	look_angle = prey_angle
 	chomp_timer = maxf(chomp_timer, 0.28 * clamped)
 	happy_timer = maxf(happy_timer, 0.55 * minf(clamped, 1.2))
-	_gulp_wave = maxf(_gulp_wave, 1.0 * clamped)
 	mouth_open = 1.0
+
+	# Travelling chomp gulp bulge (0 -> 1 over GULP_DURATION)
+	_gulp_phase = 0.0
+	_gulp_intensity = maxf(_gulp_intensity, clamped)
+
+	# Jelly impulse: front lobes snap forward/outward, flanks recoil slightly
+	var chomp_fwd: Vector2 = Vector2.from_angle(prey_angle)
+	var chomp_side: Vector2 = Vector2(-chomp_fwd.y, chomp_fwd.x)
+	var imp: float = minf(clamped, 1.3)
+	_lobe_vel[3] += (chomp_fwd * 1.65 - chomp_side * 1.15) * imp
+	_lobe_vel[4] += (chomp_fwd * 1.65 + chomp_side * 1.15) * imp
+	_lobe_vel[1] -= chomp_side * 0.75 * imp
+	_lobe_vel[2] += chomp_side * 0.75 * imp
+	_lobe_vel[0] -= chomp_fwd * 0.95 * imp
+	_wobble_amp = maxf(_wobble_amp, 0.75 * imp)
+
 	# Elastic chomp pop bounce
 	var pop_boost: float = minf(clamped, 1.25)
 	_pop_scale = maxf(_pop_scale, 0.16 * pop_boost)
@@ -173,8 +236,21 @@ func trigger_dash(dir_angle: float, level: int = 1) -> void:
 	_dash_boost_mult = 2.0 + 0.35 * float(lvl - 1)
 	var impulse_speed: float = world_size * (10.8 + 2.2 * float(lvl - 1))
 	velocity = Vector2.from_angle(dir_angle) * impulse_speed
-	_stretch = maxf(_stretch, 0.95)
 	happy_timer = maxf(happy_timer, 0.25)
+
+	# Viscous dash stretch impulse: front surges, rear trails, flanks pinch inward
+	var d_fwd: Vector2 = Vector2.from_angle(dir_angle)
+	var d_side: Vector2 = Vector2(-d_fwd.y, d_fwd.x)
+	var lvl_scale: float = 1.0 + 0.22 * float(lvl - 1)
+	_lobe_vel[0] -= d_fwd * (2.6 * lvl_scale)
+	_lobe_vel[1] += (d_side * 1.25 - d_fwd * 0.95) * lvl_scale
+	_lobe_vel[2] += (-d_side * 1.25 - d_fwd * 0.95) * lvl_scale
+	_lobe_vel[3] += (d_fwd * 2.1 + d_side * 0.45) * lvl_scale
+	_lobe_vel[4] += (d_fwd * 2.1 - d_side * 0.45) * lvl_scale
+	_wobble_amp = maxf(_wobble_amp, 0.95)
+
+	for i: int in range(MAX_DROPLETS):
+		_pearl_vel[i] -= d_fwd * (1.35 * lvl_scale)
 
 
 func trigger_hurt(away_angle: float) -> void:
@@ -183,11 +259,25 @@ func trigger_hurt(away_angle: float) -> void:
 	danger_level = 1.0
 	happy_timer = 0.0
 	chomp_timer = 0.0
-	_gulp_wave = 0.0
-	_stretch = 0.8
+	_gulp_phase = -1.0
+	_gulp_intensity = 0.0
 	var knock_speed: float = world_size * 7.2
 	velocity = Vector2.from_angle(away_angle) * knock_speed
 	facing_angle = away_angle
+
+	# Radial jelly shockwave + pearl scatter on impact
+	var k_fwd: Vector2 = Vector2.from_angle(away_angle)
+	var k_side: Vector2 = Vector2(-k_fwd.y, k_fwd.x)
+	_lobe_vel[0] -= k_fwd * 3.1
+	_lobe_vel[1] -= k_side * 2.7
+	_lobe_vel[2] += k_side * 2.7
+	_lobe_vel[3] += k_fwd * 1.9 - k_side * 1.7
+	_lobe_vel[4] += k_fwd * 1.9 + k_side * 1.7
+	_wobble_amp = 1.0
+
+	for i: int in range(MAX_DROPLETS):
+		var scatter_ang: float = away_angle + PI + (float(i) - 1.0) * 1.1
+		_pearl_vel[i] += Vector2.from_angle(scatter_ang) * 1.9
 
 
 func step_motion(
@@ -206,7 +296,13 @@ func step_motion(
 	happy_timer = maxf(0.0, happy_timer - step_dt)
 	chomp_timer = maxf(0.0, chomp_timer - step_dt)
 	dash_timer = maxf(0.0, dash_timer - step_dt)
-	_gulp_wave = maxf(0.0, _gulp_wave - step_dt * 3.4)
+
+	# Advance travelling chomp gulp wave (0 -> 1 over 0.38s)
+	if _gulp_phase >= 0.0:
+		_gulp_phase += step_dt / GULP_DURATION
+		if _gulp_phase >= 1.0:
+			_gulp_phase = -1.0
+			_gulp_intensity = 0.0
 
 	# Elastic damped spring for chomp pop bounce
 	if absf(_pop_scale) > 0.0004 or absf(_pop_vel) > 0.004:
@@ -220,6 +316,8 @@ func step_motion(
 	scale = Vector2(visual_scale, visual_scale)
 
 	# Scale-invariant swimming physics (snappy thumb response)
+	var prev_vel: Vector2 = _prev_velocity
+	var prev_facing: float = _prev_facing_angle
 	var base_max_speed: float = world_size * 7.4
 	var active_max_speed: float = base_max_speed * (_dash_boost_mult if dash_timer > 0.0 else 1.0)
 
@@ -239,8 +337,11 @@ func step_motion(
 	if speed > world_size * 0.25:
 		facing_angle = lerp_angle(facing_angle, velocity.angle(), 1.0 - exp(-16.0 * step_dt))
 
-	var target_stretch: float = clampf(speed_norm * 0.65, 0.0, 1.15)
-	_stretch = lerpf(_stretch, target_stretch, 1.0 - exp(-11.0 * step_dt))
+	var safe_dt: float = maxf(step_dt, 0.001)
+	var accel_local_norm: Vector2 = ((velocity - prev_vel) / safe_dt / maxf(world_size, 1.0)).limit_length(24.0)
+	var ang_vel: float = clampf(angle_difference(prev_facing, facing_angle) / safe_dt, -14.0, 14.0)
+	_prev_velocity = velocity
+	_prev_facing_angle = facing_angle
 
 	# Gentle playful face tilt following swim direction
 	var swim_x_sign: float = 1.0 if cos(facing_angle) >= 0.0 else -1.0
@@ -294,15 +395,16 @@ func step_motion(
 		target_mouth = clampf((prey_proximity - 0.12) * 1.15, 0.0, 0.92)
 	mouth_open = lerpf(mouth_open, target_mouth, 1.0 - exp(-14.0 * step_dt))
 
-	# Danger pulse when vulnerable (0 droplets left) or predator very close
+	# Danger pulse when vulnerable (0 vitality pearls left) or predator very close
 	var target_danger: float = 1.0 if droplets_alive <= 0 else clampf((pred_threat - 0.55) * 1.6, 0.0, 0.7)
 	_danger_pulse = lerpf(_danger_pulse, target_danger, 1.0 - exp(-8.0 * step_dt))
 
 	# Periodic cute blink
 	_step_blink(step_dt)
 
-	# Spring-lag physics & heal-bloom scaling for tethered lava droplets
-	_step_droplets(step_dt)
+	# 5-lobe viscous spring-mass slime skeleton + 3 internal vitality pearls
+	_step_slime_body(step_dt, speed_norm, accel_local_norm, ang_vel)
+	_step_pearls(step_dt, accel_local_norm)
 
 	# Sync visuals & shader uniforms
 	_sync_body_rect()
@@ -331,58 +433,127 @@ func _step_blink(dt: float) -> void:
 			_blink_phase = 0.001
 
 
-func _get_droplet_rest_offsets() -> Array[Vector2]:
-	var back: Vector2 = Vector2(-cos(facing_angle), -sin(facing_angle))
-	var perp: Vector2 = Vector2(-back.y, back.x)
-	var speed_trail: float = _stretch * 0.34
-	var bob0: float = sin(_time * 1.65) * 0.085
-	var bob1: float = cos(_time * 1.35 + 1.4) * 0.105
-	var bob2: float = sin(_time * 1.50 + 2.7) * 0.085
-	return [
-		back * (0.68 + speed_trail + bob0) + perp * (-0.34 + bob1 * 0.55),
-		back * (0.86 + speed_trail * 1.28 + bob1) + perp * (bob0 * 0.50),
-		back * (0.68 + speed_trail + bob2) + perp * (0.34 - bob1 * 0.55),
-	]
+func _get_lobe_rest_offsets(speed_norm: float, fwd_acc: float, ang_vel: float) -> Array[Vector2]:
+	var fwd: Vector2 = Vector2.from_angle(facing_angle)
+	var side: Vector2 = Vector2(-fwd.y, fwd.x)
+
+	# Living breathing + volume-conserving acceleration stretch & braking squash
+	var breath: float = sin(_time * 2.7) * 0.022
+	var breath_lat: float = cos(_time * 2.7) * 0.018
+	var elong: float = clampf(speed_norm * 0.14 + fwd_acc * 0.014, -0.18, 0.32)
+	var fwd_scale: float = 1.0 + elong + breath
+	var side_scale: float = (1.0 / (1.0 + elong * 0.65)) + breath_lat
+
+	# Turn slosh from angular velocity (tail swings outward, front leads into turn)
+	var turn_slosh: float = clampf(ang_vel * 0.016, -0.14, 0.14)
+
+	# 0: rear tail, 1/2: left/right squishy flanks, 3/4: front-left/front-right chomp lobes
+	var rear: Vector2 = fwd * (-0.24 * fwd_scale) - side * (turn_slosh * 1.15)
+	var flank_l: Vector2 = fwd * (-0.04 * fwd_scale) - side * (0.24 * side_scale + turn_slosh * 0.35)
+	var flank_r: Vector2 = fwd * (-0.04 * fwd_scale) + side * (0.24 * side_scale - turn_slosh * 0.35)
+	var front_l: Vector2 = fwd * (0.20 * fwd_scale) - side * (0.15 * side_scale - turn_slosh * 0.45)
+	var front_r: Vector2 = fwd * (0.20 * fwd_scale) + side * (0.15 * side_scale + turn_slosh * 0.45)
+	return [rear, flank_l, flank_r, front_l, front_r]
 
 
-func _step_droplets(dt: float) -> void:
-	var rest_offsets: Array[Vector2] = _get_droplet_rest_offsets()
-	var safe_size: float = maxf(world_size, 1.0)
-	# Heavy viscous oil-like inertia so droplets lag smoothly, stretch thick necks, and ooze-merge back in
-	var stiffness_values: Array[float] = [42.0, 32.0, 38.0]
-	var damping_values: Array[float] = [6.8, 5.8, 6.4]
+func _step_slime_body(dt: float, speed_norm: float, accel_local_norm: Vector2, ang_vel: float) -> void:
+	var fwd: Vector2 = Vector2.from_angle(facing_angle)
+	var fwd_acc: float = accel_local_norm.dot(fwd)
+	var targets: Array[Vector2] = _get_lobe_rest_offsets(speed_norm, fwd_acc, ang_vel)
+
+	# Travelling chomp gulp wave modulates core & lobe radii from front -> center -> rear
+	var wave_front: float = 0.0
+	var wave_mid: float = 0.0
+	var wave_rear: float = 0.0
+	if _gulp_phase >= 0.0:
+		wave_front = sin(clampf(_gulp_phase / 0.45, 0.0, 1.0) * PI) * _gulp_intensity
+		wave_mid = sin(clampf((_gulp_phase - 0.18) / 0.52, 0.0, 1.0) * PI) * _gulp_intensity
+		wave_rear = sin(clampf((_gulp_phase - 0.42) / 0.58, 0.0, 1.0) * PI) * _gulp_intensity
+
+	var breath_r: float = sin(_time * 2.7) * 0.014
+	var squash_r: float = clampf(-fwd_acc * 0.0022, -0.025, 0.032)
+	_core_radius = CORE_BASE_RADIUS + breath_r + squash_r * 0.65 + wave_mid * 0.042
+	_lobe_rad[0] = LOBE_BASE_RADII[0] + breath_r * 0.7 + wave_rear * 0.052
+	_lobe_rad[1] = LOBE_BASE_RADII[1] + breath_r * 0.6 + squash_r + wave_mid * 0.038
+	_lobe_rad[2] = LOBE_BASE_RADII[2] + breath_r * 0.6 + squash_r + wave_mid * 0.038
+	_lobe_rad[3] = LOBE_BASE_RADII[3] + breath_r * 0.5 + wave_front * 0.056
+	_lobe_rad[4] = LOBE_BASE_RADII[4] + breath_r * 0.5 + wave_front * 0.056
+
+	# Sub-stepped viscous spring-mass integration
+	var sub_steps: int = 2 if dt > 0.025 else 1
+	var sub_dt: float = dt / float(sub_steps)
+	for _s: int in range(sub_steps):
+		for i: int in range(LOBE_COUNT):
+			var disp: Vector2 = targets[i] - _lobe_pos[i]
+			var spring_acc: Vector2 = disp * LOBE_STIFFNESS[i] - _lobe_vel[i] * LOBE_DAMPING[i]
+			var inertia_acc: Vector2 = -accel_local_norm * (LOBE_MASS[i] * 0.095)
+			_lobe_vel[i] += (spring_acc + inertia_acc) * sub_dt
+			_lobe_pos[i] += _lobe_vel[i] * sub_dt
+
+			var offset_len: float = _lobe_pos[i].length()
+			if offset_len > LOBE_MAX_OFFSET:
+				var dir: Vector2 = _lobe_pos[i] / offset_len
+				_lobe_pos[i] = dir * LOBE_MAX_OFFSET
+				var radial_v: float = _lobe_vel[i].dot(dir)
+				if radial_v > 0.0:
+					_lobe_vel[i] -= dir * radial_v * 0.75
+
+	# Surface jelly ripple energy driven by live lobe jiggle velocity
+	var vel_energy: float = 0.0
+	for i: int in range(LOBE_COUNT):
+		vel_energy += _lobe_vel[i].length()
+	var target_wobble: float = clampf((vel_energy / float(LOBE_COUNT)) * 0.42, 0.0, 1.0)
+	_wobble_amp = lerpf(_wobble_amp, target_wobble, 1.0 - exp(-7.5 * dt))
+
+
+func _get_pearl_orbit_targets() -> Array[Vector2]:
+	var orbit_speeds: Array[float] = [0.72, -0.58, 0.65]
+	var orbit_radii: Array[float] = [0.18, 0.16, 0.19]
+	var targets: Array[Vector2] = []
+	for i: int in range(MAX_DROPLETS):
+		var phase: float = _time * orbit_speeds[i] + float(i) * (TAU / float(MAX_DROPLETS)) + facing_angle * 0.35
+		var rad: float = orbit_radii[i] + sin(_time * 1.45 + float(i) * 2.1) * 0.035
+		targets.append(Vector2(cos(phase) * rad, sin(phase) * rad))
+	return targets
+
+
+func _step_pearls(dt: float, accel_local_norm: Vector2) -> void:
 	var alive_clamped: int = clampi(droplets_alive, 0, MAX_DROPLETS)
+	var orbit_targets: Array[Vector2] = _get_pearl_orbit_targets()
 
-	# Detect regenerated droplets and trigger smooth heal-bloom (0.08 -> 1.0)
+	# Detect regenerated vitality pearls and trigger smooth heal-bloom (0.08 -> 1.0)
 	if alive_clamped > _prev_droplets_alive:
 		for i: int in range(maxi(_prev_droplets_alive, 0), alive_clamped):
-			_drop_scales[i] = 0.08
-			_drop_world_pos[i] = position + rest_offsets[i] * safe_size * 0.35
-			_drop_world_vel[i] = Vector2.ZERO
+			_pearl_scales[i] = 0.08
+			_pearl_pos[i] = orbit_targets[i] * 0.25
+			_pearl_vel[i] = Vector2.ZERO
 	_prev_droplets_alive = alive_clamped
 
 	for i: int in range(MAX_DROPLETS):
 		if i < alive_clamped:
-			if _drop_scales[i] < 0.999:
-				_drop_scales[i] = lerpf(_drop_scales[i], 1.0, 1.0 - exp(-6.2 * dt))
-				if _drop_scales[i] > 0.995:
-					_drop_scales[i] = 1.0
+			if _pearl_scales[i] < 0.999:
+				_pearl_scales[i] = lerpf(_pearl_scales[i], 1.0, 1.0 - exp(-6.4 * dt))
+				if _pearl_scales[i] > 0.995:
+					_pearl_scales[i] = 1.0
 		else:
-			_drop_scales[i] = 0.0
+			# Juicy hurt-pop shrink to 0.0
+			if _pearl_scales[i] > 0.0:
+				_pearl_scales[i] = lerpf(_pearl_scales[i], 0.0, 1.0 - exp(-18.0 * dt))
+				if _pearl_scales[i] < 0.02:
+					_pearl_scales[i] = 0.0
 
-		var target_world: Vector2 = position + rest_offsets[i] * safe_size
-		var disp: Vector2 = target_world - _drop_world_pos[i]
-		var accel: Vector2 = disp * stiffness_values[i] - _drop_world_vel[i] * damping_values[i]
-		_drop_world_vel[i] += accel * dt
-		_drop_world_pos[i] += _drop_world_vel[i] * dt
+		var disp: Vector2 = orbit_targets[i] - _pearl_pos[i]
+		var fluid_acc: Vector2 = disp * 26.0 - _pearl_vel[i] * 6.0 - accel_local_norm * 0.032
+		_pearl_vel[i] += fluid_acc * dt
+		_pearl_pos[i] += _pearl_vel[i] * dt
 
-		# Convert back to local shader space (-2.6..2.6) and clamp within metaball quad
-		var local_uv: Vector2 = (_drop_world_pos[i] - position) / safe_size
-		var max_dist: float = 1.85
-		if local_uv.length() > max_dist:
-			local_uv = local_uv.normalized() * max_dist
-			_drop_world_pos[i] = position + local_uv * safe_size
-		_drop_local_uv[i] = local_uv
+		var dist: float = _pearl_pos[i].length()
+		if dist > PEARL_MAX_OFFSET:
+			var dir: Vector2 = _pearl_pos[i] / dist
+			_pearl_pos[i] = dir * PEARL_MAX_OFFSET
+			var radial_v: float = _pearl_vel[i].dot(dir)
+			if radial_v > 0.0:
+				_pearl_vel[i] -= dir * radial_v * 0.8
 
 
 func _sync_body_rect() -> void:
@@ -408,26 +579,28 @@ func _update_shader_uniforms(palette: Dictionary) -> void:
 	_palette_edge = edge_col
 	_palette_glow = glow_col
 
-	var vel_dir: Vector2 = velocity.normalized() if velocity.length_squared() > 1.0 else Vector2.from_angle(facing_angle)
-	var invuln_flash: float = 0.0
+	_invuln_flash = 0.0
 	if invuln_timer > 0.0:
-		invuln_flash = 0.5 + 0.5 * sin(_time * 26.0)
+		_invuln_flash = 0.5 + 0.5 * sin(_time * 26.0)
+
+	if _face_overlay != null:
+		_face_overlay.modulate.a = 1.0 - _invuln_flash * 0.30
 
 	_body_mat.set_shader_parameter("core_color", core_col)
 	_body_mat.set_shader_parameter("edge_color", edge_col)
 	_body_mat.set_shader_parameter("glow_color", glow_col)
-	_body_mat.set_shader_parameter("vel_dir", vel_dir)
-	_body_mat.set_shader_parameter("stretch", _stretch)
-	_body_mat.set_shader_parameter("gulp_wave", _gulp_wave)
 	_body_mat.set_shader_parameter("danger_pulse", _danger_pulse)
-	_body_mat.set_shader_parameter("invuln_flash", invuln_flash)
-	_body_mat.set_shader_parameter("droplet_count", clampi(droplets_alive, 0, MAX_DROPLETS))
-	_body_mat.set_shader_parameter("drop_pos_0", _drop_local_uv[0])
-	_body_mat.set_shader_parameter("drop_pos_1", _drop_local_uv[1])
-	_body_mat.set_shader_parameter("drop_pos_2", _drop_local_uv[2])
-	_body_mat.set_shader_parameter("drop_scale_0", _drop_scales[0])
-	_body_mat.set_shader_parameter("drop_scale_1", _drop_scales[1])
-	_body_mat.set_shader_parameter("drop_scale_2", _drop_scales[2])
+	_body_mat.set_shader_parameter("invuln_flash", _invuln_flash)
+	_body_mat.set_shader_parameter("core_radius", _core_radius)
+	_body_mat.set_shader_parameter("wobble_amp", _wobble_amp)
+
+	for i: int in range(LOBE_COUNT):
+		var lp: Vector2 = _lobe_pos[i]
+		_body_mat.set_shader_parameter(LOBE_UNIFORM_NAMES[i], Vector3(lp.x, lp.y, _lobe_rad[i]))
+
+	for i: int in range(MAX_DROPLETS):
+		var pp: Vector2 = _pearl_pos[i]
+		_body_mat.set_shader_parameter(PEARL_UNIFORM_NAMES[i], Vector3(pp.x, pp.y, _pearl_scales[i]))
 
 
 func _draw_ellipse(
@@ -481,11 +654,40 @@ func _draw_face(canvas: CanvasItem) -> void:
 	if r < 2.0:
 		return
 
-	var look_vec: Vector2 = Vector2.from_angle(look_angle)
-	var face_center: Vector2 = look_vec * (r * 0.22)
+	# Couple face to live 5-lobe skeleton: inertial center shift + bbox squash/stretch + rear-tail jiggle tilt
+	var all_centroid: Vector2 = (_lobe_pos[0] + _lobe_pos[1] + _lobe_pos[2] + _lobe_pos[3] + _lobe_pos[4]) * 0.2
+	var front_centroid: Vector2 = (_lobe_pos[3] + _lobe_pos[4]) * 0.5
+	var lobe_shift: Vector2 = all_centroid * 0.55 + front_centroid * 0.25
 
-	# Apply gentle playful face tilt around face_center
-	canvas.draw_set_transform(face_center, _face_tilt, Vector2.ONE)
+	var min_x: float = -_core_radius
+	var max_x: float = _core_radius
+	var min_y: float = -_core_radius
+	var max_y: float = _core_radius
+	for i: int in range(LOBE_COUNT):
+		var lp: Vector2 = _lobe_pos[i]
+		var lr: float = _lobe_rad[i]
+		min_x = minf(min_x, lp.x - lr)
+		max_x = maxf(max_x, lp.x + lr)
+		min_y = minf(min_y, lp.y - lr)
+		max_y = maxf(max_y, lp.y + lr)
+	var rest_span: float = 1.04
+	var raw_sx: float = (max_x - min_x) / rest_span
+	var raw_sy: float = (max_y - min_y) / rest_span
+	var face_scale: Vector2 = Vector2(
+		clampf(lerpf(1.0, raw_sx, 0.42), 0.85, 1.18),
+		clampf(lerpf(1.0, raw_sy, 0.42), 0.85, 1.18)
+	)
+
+	var fwd: Vector2 = Vector2.from_angle(facing_angle)
+	var side: Vector2 = Vector2(-fwd.y, fwd.x)
+	var tail_jiggle_tilt: float = _lobe_pos[0].dot(side) * 0.26
+	var total_tilt: float = clampf(_face_tilt + tail_jiggle_tilt, -0.24, 0.24)
+
+	var look_vec: Vector2 = Vector2.from_angle(look_angle)
+	var face_center: Vector2 = look_vec * (r * 0.20) + lobe_shift * (world_size * 0.52)
+
+	# Apply coupled inertial transform around face_center
+	canvas.draw_set_transform(face_center, total_tilt, face_scale)
 
 	var eye_sep: float = r * 0.355
 	var eye_y: float = -r * 0.075

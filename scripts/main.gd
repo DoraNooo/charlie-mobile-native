@@ -14,8 +14,6 @@ const MAX_COMBO: int = 6
 const PASSIVE_HEAL_SECONDS: float = 8.0
 const DIRECT_TOUCH_DEADZONE: float = 18.0
 const DIRECT_TOUCH_FULL_RADIUS: float = 110.0
-const MAX_TRAIL_DOTS: int = 8
-const TRAIL_SPAWN_INTERVAL: float = 0.095
 
 enum GameState {
 	TITLE,
@@ -85,13 +83,11 @@ var _vfx_layer: _WorldVfxLayer = null
 var _audio: AudioEngine = null
 var _cutscenes: CutscenePlayer = null
 
-# World VFX state (lava spit projectiles, shockwaves, chomp/heal bursts, molten embers, liquid micro-beads, scale warp veil)
+# World VFX state (lava spit projectiles, shockwaves, chomp/heal bursts, molten embers, scale warp veil)
 var _projectiles: Array[Dictionary] = []
 var _shockwaves: Array[Dictionary] = []
 var _bursts: Array[Dictionary] = []
 var _embers: Array[Dictionary] = []
-var _trail_dots: Array[Dictionary] = []
-var _trail_spawn_cd: float = 0.0
 var _warp_flash_life: float = 0.0
 var _warp_flash_max: float = 0.85
 var _warp_origin: Vector2 = Vector2.ZERO
@@ -1669,8 +1665,6 @@ func _reset_world_to_scale(scale_idx: int) -> void:
 	_shockwaves.clear()
 	_bursts.clear()
 	_embers.clear()
-	_trail_dots.clear()
-	_trail_spawn_cd = 0.0
 	_warp_flash_life = 0.0
 	if _vfx_was_active and _vfx_layer != null:
 		_vfx_layer.queue_redraw()
@@ -1928,42 +1922,6 @@ func _process(delta: float) -> void:
 	_update_background_shader(palette, progress)
 
 
-func _step_swim_trail(dt: float, palette: Dictionary) -> void:
-	# Emit subtle, sparse, translucent glossy liquid-oil micro-beads only when swimming fast or dashing
-	var speed_ratio: float = _charlie.velocity.length() / maxf(_charlie.world_size, 1.0)
-	_trail_spawn_cd -= dt
-	if _trail_spawn_cd <= 0.0 and speed_ratio > 3.2:
-		var is_dashing: bool = speed_ratio > 6.0
-		_trail_spawn_cd = 0.055 if is_dashing else TRAIL_SPAWN_INTERVAL
-		if _trail_dots.size() >= MAX_TRAIL_DOTS:
-			_trail_dots.pop_front()
-		var back_dir: Vector2 = -_charlie.velocity.normalized()
-		var perp: Vector2 = Vector2(-back_dir.y, back_dir.x) * randf_range(-0.22, 0.22) * _charlie.world_size
-		var spawn_pos: Vector2 = _charlie.position + back_dir * (_charlie.world_size * 0.68) + perp
-		var life: float = randf_range(0.36, 0.56) if not is_dashing else randf_range(0.42, 0.64)
-		var dot_r: float = _charlie.world_size * (randf_range(0.16, 0.26) if is_dashing else randf_range(0.12, 0.20))
-		var wax_col: Color = palette.get("blob_edge", Color(0.88, 0.48, 0.42, 1.0)) as Color
-		_trail_dots.append({
-			"pos": spawn_pos,
-			"vel": back_dir * (_charlie.world_size * randf_range(0.18, 0.45)),
-			"radius": dot_r,
-			"life": life,
-			"max_life": life,
-			"color": wax_col,
-		})
-
-	var t_idx: int = _trail_dots.size() - 1
-	while t_idx >= 0:
-		var td: Dictionary = _trail_dots[t_idx]
-		td["life"] = float(td["life"]) - dt
-		var td_vel: Vector2 = (td["vel"] as Vector2) * exp(-dt * 3.8)
-		td["vel"] = td_vel
-		td["pos"] = (td["pos"] as Vector2) + td_vel * dt
-		if float(td["life"]) <= 0.0:
-			_trail_dots.remove_at(t_idx)
-		t_idx -= 1
-
-
 func _step_title_swim(dt: float, palette: Dictionary) -> void:
 	# Gentle figure-8 swim offset around the title card so Charlie stays lively & visible
 	_title_swim_time += dt
@@ -1976,10 +1934,9 @@ func _step_title_swim(dt: float, palette: Dictionary) -> void:
 	var move_dir: Vector2 = to_target.normalized() * clampf(to_target.length() / maxf(_charlie.world_size * 2.2, 1.0), 0.25, 0.72)
 
 	_charlie.step_motion(dt, move_dir, true, null, null, palette)
-	_step_swim_trail(dt, palette)
-	if not _trail_dots.is_empty() or _vfx_was_active:
+	if _vfx_was_active:
 		_vfx_layer.queue_redraw()
-		_vfx_was_active = not _trail_dots.is_empty()
+		_vfx_was_active = false
 
 	# Keep camera gently drifting near origin so Charlie loops into clear view around the card
 	var desired_cam: Vector2 = _charlie.position * 0.18
@@ -2022,7 +1979,6 @@ func _step_playing(dt: float, palette: Dictionary) -> void:
 	var predator_chasing: bool = bool(eco_info.get("predator_chasing", false))
 
 	_charlie.step_motion(dt, move_dir, has_input, nearest_prey, nearest_pred, palette)
-	_step_swim_trail(dt, palette)
 	_step_projectiles_and_vfx(dt, creatures)
 	_resolve_creature_collisions(creatures)
 	if state != GameState.PLAYING:
@@ -2065,7 +2021,6 @@ func _step_playing(dt: float, palette: Dictionary) -> void:
 		or not _shockwaves.is_empty()
 		or not _bursts.is_empty()
 		or not _embers.is_empty()
-		or not _trail_dots.is_empty()
 		or _warp_flash_life > 0.0
 	)
 	if has_vfx or _vfx_was_active:
@@ -2334,8 +2289,6 @@ func _advance_scale() -> void:
 	_shockwaves.clear()
 	_bursts.clear()
 	_embers.clear()
-	_trail_dots.clear()
-	_trail_spawn_cd = 0.0
 
 	if current_scale_index + 1 < Scales.NUM_SCALES:
 		var prev_lvl: int = _get_power_level()
@@ -2533,17 +2486,6 @@ func _draw_world_vfx(canvas: Node2D) -> void:
 				var inner_ring: Color = Color(1.0, 0.95, 0.84, r_fade * 0.78)
 				canvas.draw_arc(_warp_origin, ring_r, 0.0, TAU, 56, outer_ring, maxf(3.0, base_r * 0.30 * r_fade), true)
 				canvas.draw_arc(_warp_origin, ring_r, 0.0, TAU, 56, inner_ring, maxf(1.5, base_r * 0.10 * r_fade), true)
-
-	# Subtle translucent glossy liquid-oil micro-beads behind Charlie
-	for td: Dictionary in _trail_dots:
-		var frac: float = clampf(float(td["life"]) / maxf(0.01, float(td["max_life"])), 0.0, 1.0)
-		var fade: float = frac * frac
-		var td_pos: Vector2 = td["pos"] as Vector2
-		var td_r: float = float(td["radius"]) * (0.45 + 0.55 * frac)
-		var col: Color = td["color"] as Color
-		_draw_soft_glow(canvas, td_pos, td_r * 1.85, Color(col.r, col.g, col.b, fade * 0.16))
-		canvas.draw_circle(td_pos, td_r, Color(col.r, col.g, col.b, fade * 0.32))
-		canvas.draw_circle(td_pos + Vector2(-td_r * 0.28, -td_r * 0.28), td_r * 0.28, Color(1.0, 0.97, 0.92, fade * 0.26))
 
 	# Shockwaves (soft outer halo band + crisp bright core ring + spawn flash)
 	for w: Dictionary in _shockwaves:

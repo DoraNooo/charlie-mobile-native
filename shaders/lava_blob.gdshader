@@ -1,125 +1,146 @@
 shader_type canvas_item;
 
-// Real-time GPU Metaball / Lava-Lamp shader for la petite Charlie (Vulkan/Metal 120 FPS)
+// Real-time 2.5D Translucent Jiggly Slime shader for la petite Charlie (Vulkan/Metal 120 FPS)
 uniform vec4 core_color : source_color = vec4(1.0, 0.78, 0.50, 1.0);
 uniform vec4 edge_color : source_color = vec4(0.96, 0.38, 0.42, 1.0);
 uniform vec4 glow_color : source_color = vec4(1.0, 0.50, 0.28, 1.0);
-uniform vec2 vel_dir = vec2(1.0, 0.0);
-uniform float stretch = 0.0;
-uniform float gulp_wave = 0.0;
 uniform float danger_pulse = 0.0;
 uniform float invuln_flash = 0.0;
+uniform float core_radius = 0.46;
+uniform float wobble_amp = 0.0;
 
-// Up to 3 diegetic tethered lava-lamp droplets in local space + heal-bloom scales
-uniform int droplet_count = 3;
-uniform vec2 drop_pos_0 = vec2(-0.55, -0.25);
-uniform vec2 drop_pos_1 = vec2(-0.62, 0.0);
-uniform vec2 drop_pos_2 = vec2(-0.55, 0.25);
-uniform float drop_scale_0 = 1.0;
-uniform float drop_scale_1 = 1.0;
-uniform float drop_scale_2 = 1.0;
+// 5 viscous spring-mass lobes: xy = local pos, z = dynamic radius
+uniform vec3 lobe_0 = vec3(-0.24, 0.0, 0.30);
+uniform vec3 lobe_1 = vec3(-0.04, -0.24, 0.29);
+uniform vec3 lobe_2 = vec3(-0.04, 0.24, 0.29);
+uniform vec3 lobe_3 = vec3(0.20, -0.15, 0.27);
+uniform vec3 lobe_4 = vec3(0.20, 0.15, 0.27);
 
-float metaball_field(vec2 p, vec2 center, float r) {
-	vec2 d = p - center;
-	return (r * r) / max(dot(d, d), 0.0005);
+// 3 internal vitality pearls: xy = local pos, z = bloom scale (0..1)
+uniform vec3 pearl_0 = vec3(-0.14, -0.10, 1.0);
+uniform vec3 pearl_1 = vec3(-0.04, 0.16, 1.0);
+uniform vec3 pearl_2 = vec3(0.14, -0.05, 1.0);
+
+float smin(float a, float b, float k) {
+	float h = max(k - abs(a - b), 0.0) / k;
+	return min(a, b) - h * h * k * 0.25;
 }
 
-float convection_blob(vec2 p, vec2 center, float radius) {
-	float d = length(p - center);
-	return 1.0 - smoothstep(radius * 0.12, radius, d);
+float slime_sdf(vec2 p) {
+	float d = length(p) - core_radius;
+	d = smin(d, length(p - lobe_0.xy) - lobe_0.z, 0.42);
+	d = smin(d, length(p - lobe_1.xy) - lobe_1.z, 0.42);
+	d = smin(d, length(p - lobe_2.xy) - lobe_2.z, 0.42);
+	d = smin(d, length(p - lobe_3.xy) - lobe_3.z, 0.42);
+	d = smin(d, length(p - lobe_4.xy) - lobe_4.z, 0.42);
+	float ripple = sin(p.x * 5.2 + TIME * 3.1) * cos(p.y * 5.2 - TIME * 2.6) * (0.011 + wobble_amp * 0.026);
+	return d + ripple;
+}
+
+vec2 sample_pearl(vec2 p_ref, vec3 pearl) {
+	if (pearl.z <= 0.01) {
+		return vec2(0.0);
+	}
+	float r = max(0.02, 0.125 * pearl.z);
+	float dist = length(p_ref - pearl.xy);
+	float body = 1.0 - smoothstep(r * 0.20, r * 1.05, dist);
+	float halo = (1.0 - smoothstep(r * 0.45, r * 2.05, dist)) * 0.46;
+	float core_r = max(0.015, 0.062 * pearl.z);
+	float sparkle = 1.0 - smoothstep(core_r * 0.25, core_r, dist);
+	return vec2(clamp((body + halo) * pearl.z, 0.0, 1.0), sparkle * pearl.z);
 }
 
 void fragment() {
-	// Map UV [0..1] to [-2.6..2.6] (BODY_QUAD_SCALE = 5.2) — zero square clipping around aura & droplets
-	vec2 p = (UV - vec2(0.5)) * 5.2;
+	// Quad coordinate space matching BODY_QUAD_SCALE = 3.4
+	vec2 p = (UV - vec2(0.5)) * 3.4;
 
-	// Velocity-aligned viscous squash & stretch
-	vec2 fwd = normalize(vel_dir + vec2(0.0001, 0.0));
-	vec2 side = vec2(-fwd.y, fwd.x);
-	vec2 aligned = vec2(dot(p, fwd), dot(p, side));
-	vec2 warped = vec2(aligned.x / (1.0 + stretch * 0.24), aligned.y * (1.0 + stretch * 0.14));
-
-	// Slow, heavy undulating viscous surface wobble (2nd & 3rd-order smooth oil deformation, zero flame jitter)
-	float ang = atan(warped.y, warped.x);
-	float wobble = sin(ang * 2.0 + TIME * 1.15) * 0.036 + cos(ang * 3.0 - TIME * 0.85) * 0.026;
-	float body_r = 0.66 + wobble + gulp_wave * 0.12 * smoothstep(-0.3, 0.9, cos(ang));
-
-	// Heavier viscous metaball field: main body + thick trailing wax droplets that form stretchy liquid necks
-	float field = metaball_field(warped, vec2(0.0), body_r);
-	if (droplet_count >= 1 && drop_scale_0 > 0.01) {
-		field += metaball_field(p, drop_pos_0, 0.27 * drop_scale_0);
-	}
-	if (droplet_count >= 2 && drop_scale_1 > 0.01) {
-		field += metaball_field(p, drop_pos_1, 0.25 * drop_scale_1);
-	}
-	if (droplet_count >= 3 && drop_scale_2 > 0.01) {
-		field += metaball_field(p, drop_pos_2, 0.23 * drop_scale_2);
+	float d = slime_sdf(p);
+	if (d > 0.06 && danger_pulse < 0.01) {
+		discard;
 	}
 
-	// Crisp, wet, glossy liquid meniscus at field == 1.0
-	float mask = smoothstep(0.94, 1.03, field);
+	// Crisp AA silhouette + delicate 1-2px translucent gel meniscus rim (ZERO smoky outer halo)
+	float body_mask = 1.0 - smoothstep(-0.025, 0.025, d);
+	float meniscus = (1.0 - smoothstep(0.0, 0.042, d)) * smoothstep(-0.018, 0.015, d);
 
-	// Subtle, soft, translucent warm glow hugging the liquid silhouette (no fireball halo)
-	float quad_edge = max(abs(p.x), abs(p.y));
-	float edge_fade = 1.0 - smoothstep(1.88, 2.50, quad_edge);
-	float exp_glow = exp(-max(1.0 - field, 0.0) * 4.2) * smoothstep(0.18, 0.94, field);
-	float aura = exp_glow * 0.18 * edge_fade;
+	// True 3D dome surface normal via 4-tap central differences + hemispherical z
+	const float EPS = 0.02;
+	float gx = slime_sdf(p + vec2(EPS, 0.0)) - slime_sdf(p - vec2(EPS, 0.0));
+	float gy = slime_sdf(p + vec2(0.0, EPS)) - slime_sdf(p - vec2(0.0, EPS));
+	vec2 grad = vec2(gx, gy) / (2.0 * EPS);
+	float grad_len = length(grad);
+	vec2 grad_dir = grad_len > 0.0001 ? grad / grad_len : vec2(0.0);
 
-	// Rich, velvety, translucent molten-wax / thick-oil subsurface shading (zero white-hot fire core)
-	vec3 deep_edge = edge_color.rgb * vec3(0.56, 0.34, 0.42);
-	vec3 mid_oil = mix(edge_color.rgb, core_color.rgb, 0.52);
-	vec3 warm_center = clamp(core_color.rgb * vec3(1.04, 1.01, 0.95), 0.0, 1.0);
-	float inner_t = clamp((field - 1.0) * 0.44, 0.0, 1.0);
-	vec3 body_col = mix(deep_edge, edge_color.rgb, smoothstep(0.0, 0.22, inner_t));
-	body_col = mix(body_col, mid_oil, smoothstep(0.18, 0.62, inner_t));
-	body_col = mix(body_col, warm_center, smoothstep(0.54, 0.96, inner_t));
+	float depth = max(-d, 0.0);
+	float dome_slope = 1.0 - smoothstep(0.0, 0.56, depth);
+	vec2 n_xy = grad_dir * (dome_slope * 0.96);
+	float xy_mag = min(length(n_xy), 0.995);
+	vec3 N = normalize(vec3(n_xy, sqrt(max(0.0, 1.0 - xy_mag * xy_mag))));
 
-	// Slow heavy internal wax convection: 4 large, soft, slow-drifting wax density blobs
-	float interior_mask = smoothstep(1.04, 1.38, field);
-	float c1 = convection_blob(warped, vec2(cos(TIME * 0.38) * 0.22, sin(TIME * 0.31) * 0.20), 0.34);
-	float c2 = convection_blob(warped, vec2(sin(TIME * 0.44 + 1.6) * 0.25, cos(TIME * 0.35 + 0.9) * 0.21), 0.30);
-	float c3 = convection_blob(warped, vec2(cos(TIME * 0.33 + 3.2) * 0.21, sin(TIME * 0.41 + 2.4) * 0.24), 0.28);
-	float c4 = convection_blob(warped, vec2(sin(TIME * 0.29 + 4.9) * 0.18, cos(TIME * 0.36 + 4.1) * 0.19), 0.25);
-	float warm_wax = clamp(c1 * 0.48 + c2 * 0.38 + c3 * 0.28, 0.0, 1.0);
-	float dense_wax = clamp(c4 * 0.55, 0.0, 1.0);
-	vec3 wax_lume = clamp(mix(core_color.rgb, glow_color.rgb * 1.08, 0.35), 0.0, 1.0);
-	body_col = mix(body_col, wax_lume, warm_wax * 0.26 * interior_mask);
-	body_col = mix(body_col, deep_edge, dense_wax * 0.18 * interior_mask);
+	// Lighting vectors
+	vec3 L_key = normalize(vec3(-0.52, -0.62, 0.58));
+	vec3 L_caustic = normalize(vec3(0.58, 0.64, 0.50));
+	vec3 V = vec3(0.0, 0.0, 1.0);
+	vec3 H = normalize(L_key + V);
+	float NdotL = max(dot(N, L_key), 0.0);
+	float NdotH = max(dot(N, H), 0.0);
 
-	// Soft warm bottom-right internal caustic refraction glow (light passing through thick colored oil)
-	float caustic_d = length((p - vec2(0.24, 0.28)) / vec2(0.52, 0.46));
-	float caustic = (1.0 - smoothstep(0.10, 0.95, caustic_d)) * smoothstep(1.02, 1.45, field);
-	vec3 caustic_col = mix(core_color.rgb, glow_color.rgb * vec3(1.12, 1.02, 0.86), 0.42);
-	body_col = mix(body_col, clamp(body_col + caustic_col * 0.32, 0.0, 1.0), caustic * 0.72);
+	// Fresnel thickness: deeply saturated jelly rim -> luminous semi-translucent gel interior
+	float fresnel = pow(clamp(1.0 - N.z, 0.0, 1.0), 2.15);
+	float rim_thickness = clamp(max(fresnel, (1.0 - smoothstep(0.0, 0.34, depth)) * 0.85), 0.0, 1.0);
+	vec3 deep_rim = edge_color.rgb * vec3(0.68, 0.46, 0.52);
+	vec3 mid_gel = mix(edge_color.rgb, core_color.rgb, 0.56);
+	vec3 core_gel = clamp(core_color.rgb * vec3(1.06, 1.03, 0.98), 0.0, 1.0);
+	vec3 body_col = mix(core_gel, mid_gel, smoothstep(0.08, 0.58, rim_thickness));
+	body_col = mix(body_col, deep_rim, smoothstep(0.54, 0.96, rim_thickness));
+	body_col *= mix(0.84, 1.08, NdotL);
 
-	// Signature wet-oil specular highlight: curved glossy crescent hugging upper-left dome + crisp secondary dot
-	vec2 spec_c = p - vec2(0.04, 0.05);
-	float spec_r = length(spec_c);
-	float spec_ang = atan(spec_c.y, spec_c.x);
-	float ang_diff = abs(atan(sin(spec_ang + 2.38), cos(spec_ang + 2.38)));
-	float arc_taper = 1.0 - smoothstep(0.18, 0.62, ang_diff);
-	float radial_band = 1.0 - smoothstep(0.015, 0.068 * mix(0.35, 1.0, arc_taper), abs(spec_r - 0.47));
-	float spec_inside = smoothstep(1.02, 1.18, field);
-	float crescent = radial_band * arc_taper * spec_inside;
-	float spec_dot = (1.0 - smoothstep(0.016, 0.056, length(p - vec2(-0.07, -0.45)))) * spec_inside;
-	float wet_spec = clamp(crescent * 0.78 + spec_dot * 0.72, 0.0, 0.92);
-	body_col = mix(body_col, vec3(1.0, 0.99, 0.97), wet_spec);
+	// 3 internal glowing gelatinous vitality pearls refracted by dome normal
+	float interior_mask = smoothstep(0.04, 0.22, depth);
+	vec2 p_ref = p - N.xy * 0.065;
+	vec2 s0 = sample_pearl(p_ref, pearl_0);
+	vec2 s1 = sample_pearl(p_ref, pearl_1);
+	vec2 s2 = sample_pearl(p_ref, pearl_2);
+	float pearl_glow = clamp(s0.x + s1.x + s2.x, 0.0, 1.25) * interior_mask;
+	float pearl_core = clamp(s0.y + s1.y + s2.y, 0.0, 1.0) * interior_mask;
+	vec3 pearl_tint = clamp(mix(core_color.rgb * 1.16, vec3(1.0, 0.97, 0.88), 0.56), 0.0, 1.0);
+	body_col = mix(body_col, clamp(body_col + pearl_tint * 0.52, 0.0, 1.0), clamp(pearl_glow * 0.76, 0.0, 0.92));
+	body_col = mix(body_col, vec3(1.0, 0.99, 0.94), pearl_core * 0.48);
 
-	// Subtle translucent glass-like meniscus rim sheen (brighter on upper-left light side, rich on shadow side)
-	float rim_band = smoothstep(0.95, 1.04, field) * (1.0 - smoothstep(1.05, 1.24, field));
-	float light_side = smoothstep(-0.35, 0.55, dot(normalize(p + vec2(0.0001)), normalize(vec2(-0.7, -0.75))));
-	vec3 rim_tint = mix(core_color.rgb * 1.06, vec3(1.0, 0.97, 0.92), 0.62);
-	body_col = mix(body_col, rim_tint, rim_band * mix(0.14, 0.40, light_side));
+	// Warm subsurface transmitted caustic bounce on bottom-right
+	float caustic_l = max(dot(N, L_caustic), 0.0);
+	float caustic = pow(caustic_l, 3.0) * smoothstep(0.02, 0.26, depth) * (1.0 - smoothstep(0.28, 0.62, depth) * 0.42);
+	vec3 caustic_col = clamp(mix(glow_color.rgb * 1.15, core_color.rgb * 1.12, 0.45), 0.0, 1.0);
+	body_col = clamp(body_col + caustic_col * caustic * 0.42, 0.0, 1.0);
 
-	// Vulnerable danger ring when 0 droplets left
-	float ring_d = abs(length(p) - (0.98 + sin(TIME * 7.0) * 0.08));
-	float danger_ring = (1.0 - smoothstep(0.01, 0.06, ring_d)) * danger_pulse;
+	// 2-layer wet glossy Blinn-Phong specular + crisp wet pinpoint glint
+	float spec_layer = pow(NdotH, 10.0) * 0.24 + pow(NdotH, 42.0) * 0.78;
+	float pinpoint = smoothstep(0.965, 0.992, NdotH) * 0.95;
+	float wet_spec = clamp(spec_layer + pinpoint, 0.0, 1.0) * smoothstep(0.0, 0.09, depth);
+	body_col = mix(body_col, vec3(1.0, 0.995, 0.98), wet_spec * 0.88);
 
-	vec3 aura_rgb = clamp(mix(edge_color.rgb, glow_color.rgb, 0.65), 0.0, 1.0);
-	vec3 final_rgb = mix(aura_rgb, body_col, mask);
-	final_rgb = mix(final_rgb, vec3(1.0, 0.30, 0.36), danger_ring * 0.85);
-	float final_alpha = max(mask, max(aura, danger_ring * 0.75));
+	// Subtle glossy rim sheen
+	float rim_sheen = fresnel * (0.18 + 0.44 * NdotL);
+	vec3 sheen_col = mix(core_color.rgb * 1.08, vec3(1.0, 0.98, 0.94), 0.65);
+	body_col = mix(body_col, sheen_col, clamp(rim_sheen * 0.42, 0.0, 0.48));
+
+	// Semi-translucent interior -> denser saturated rim
+	float body_alpha = mix(0.84, 0.98, clamp(rim_thickness + wet_spec * 0.35, 0.0, 1.0));
+
+	// Compose body + delicate gel meniscus rim
+	vec3 meniscus_col = clamp(mix(edge_color.rgb, vec3(1.0, 0.98, 0.95), 0.32 + 0.36 * NdotL), 0.0, 1.0);
+	vec3 final_rgb = mix(meniscus_col, body_col, body_mask);
+	float final_alpha = max(body_mask * body_alpha, meniscus * 0.54);
+
+	// Vulnerable danger ring when 0 vitality pearls left or predator close
+	if (danger_pulse > 0.01) {
+		float ring_r = 0.92 + sin(TIME * 7.0) * 0.06;
+		float ring_d = abs(length(p) - ring_r);
+		float danger_ring = (1.0 - smoothstep(0.012, 0.055, ring_d)) * danger_pulse;
+		final_rgb = mix(final_rgb, vec3(1.0, 0.30, 0.36), danger_ring * 0.85);
+		final_alpha = max(final_alpha, danger_ring * 0.78);
+	}
+
 	final_alpha *= (1.0 - invuln_flash * 0.38);
-
 	COLOR = vec4(final_rgb, clamp(final_alpha, 0.0, 1.0));
 }
