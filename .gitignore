@@ -1,0 +1,10 @@
+# Godot 4 ignores
+.godot/
+*.translation
+export_presets.cfg
+*.aab
+*.apk
+*.ipa
+*.keystore
+*.jks
+.DS_Store
