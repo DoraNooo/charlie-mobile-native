@@ -119,7 +119,10 @@ const CUTSCENES: Dictionary = {
 
 var _root: Control = null
 var _art_clip: Control = null
+var _bg_art: TextureRect = null
+var _art_frame: MarginContainer = null
 var _art_rect: TextureRect = null
+var _art_is_landscape: bool = true
 var _top_grad: TextureRect = null
 var _top_margin: MarginContainer = null
 var _bot_grad: TextureRect = null
@@ -176,17 +179,33 @@ func _build_ui() -> void:
 	_art_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(_art_clip)
 
+	# Soft darkened ambient full-bleed backdrop for portrait/square artwork on wide 20:9 phones
+	_bg_art = TextureRect.new()
+	_bg_art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_bg_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_bg_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_bg_art.modulate = Color(0.26, 0.34, 0.48, 0.36)
+	_bg_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_bg_art.visible = false
+	_art_clip.add_child(_bg_art)
+
+	# Framed container for hero artwork (full-bleed for landscape, centered uncropped for portrait/square)
+	_art_frame = MarginContainer.new()
+	_art_frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_art_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_art_clip.add_child(_art_frame)
+
 	_art_rect = TextureRect.new()
 	_art_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_art_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_art_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_art_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_art_clip.add_child(_art_rect)
+	_art_frame.add_child(_art_rect)
 
 	# Subtle warm cinema scrim
 	var scrim: ColorRect = ColorRect.new()
 	scrim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	scrim.color = Color(0.02, 0.05, 0.10, 0.24)
+	scrim.color = Color(0.02, 0.05, 0.10, 0.18)
 	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(scrim)
 
@@ -312,19 +331,38 @@ func apply_safe_area(insets: Rect2) -> void:
 	var bottom_in: int = maxi(0, roundi(insets.size.y))
 
 	if _top_grad != null:
-		_top_grad.offset_bottom = 116.0 + float(top_in)
+		_top_grad.offset_bottom = 88.0 + float(top_in)
 	if _top_margin != null:
-		_top_margin.offset_bottom = 86.0 + float(top_in)
-		_top_margin.add_theme_constant_override("margin_left", 28 + left_in)
-		_top_margin.add_theme_constant_override("margin_right", 28 + right_in)
-		_top_margin.add_theme_constant_override("margin_top", 22 + top_in)
+		_top_margin.offset_bottom = 72.0 + float(top_in)
+		_top_margin.add_theme_constant_override("margin_left", 24 + left_in)
+		_top_margin.add_theme_constant_override("margin_right", 24 + right_in)
+		_top_margin.add_theme_constant_override("margin_top", 16 + top_in)
 	if _bot_grad != null:
-		_bot_grad.offset_top = -(230.0 + float(bottom_in))
+		_bot_grad.offset_top = -(156.0 + float(bottom_in))
 	if _bot_margin != null:
-		_bot_margin.offset_top = -(188.0 + float(bottom_in))
-		_bot_margin.add_theme_constant_override("margin_left", 42 + left_in)
-		_bot_margin.add_theme_constant_override("margin_right", 42 + right_in)
-		_bot_margin.add_theme_constant_override("margin_bottom", 26 + bottom_in)
+		_bot_margin.offset_top = -(126.0 + float(bottom_in))
+		_bot_margin.add_theme_constant_override("margin_left", 40 + left_in)
+		_bot_margin.add_theme_constant_override("margin_right", 40 + right_in)
+		_bot_margin.add_theme_constant_override("margin_bottom", 18 + bottom_in)
+	_update_art_frame_margins()
+
+
+func _update_art_frame_margins() -> void:
+	if _art_frame == null:
+		return
+	var top_in: int = maxi(0, roundi(_safe_insets.position.y))
+	var bottom_in: int = maxi(0, roundi(_safe_insets.size.y))
+	if _art_is_landscape:
+		_art_frame.add_theme_constant_override("margin_left", 0)
+		_art_frame.add_theme_constant_override("margin_right", 0)
+		_art_frame.add_theme_constant_override("margin_top", 0)
+		_art_frame.add_theme_constant_override("margin_bottom", 0)
+	else:
+		# Frame portrait/square artwork cleanly between top chapter bar and bottom caption
+		_art_frame.add_theme_constant_override("margin_left", 32)
+		_art_frame.add_theme_constant_override("margin_right", 32)
+		_art_frame.add_theme_constant_override("margin_top", 56 + top_in)
+		_art_frame.add_theme_constant_override("margin_bottom", 112 + bottom_in)
 
 
 func _make_vertical_gradient(top_col: Color, bot_col: Color) -> GradientTexture2D:
@@ -387,14 +425,33 @@ func _apply_slide(index: int) -> void:
 
 	var slide: Dictionary = _slides[index] as Dictionary
 	var art_path: String = String(slide.get("art", ART_PORTRAIT))
-	if _textures.has(art_path):
-		_art_rect.texture = _textures[art_path] as Texture2D
+	var tex: Texture2D = _textures.get(art_path, null) as Texture2D
+	_art_rect.texture = tex
+	if tex != null:
+		var tex_sz: Vector2 = tex.get_size()
+		var tex_aspect: float = tex_sz.x / maxf(tex_sz.y, 1.0)
+		_art_is_landscape = tex_aspect >= 1.35
+		if _art_is_landscape:
+			_art_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+			_bg_art.visible = false
+			_bg_art.texture = null
+		else:
+			_art_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			_bg_art.texture = tex
+			_bg_art.visible = true
 	else:
-		_art_rect.texture = null
+		_art_is_landscape = true
+		_bg_art.visible = false
 
+	_update_art_frame_margins()
 	_caption_label.text = String(slide.get("text", ""))
 	_rebuild_dots()
 	_update_ken_burns(0.0)
+
+	# Smooth fade-in on slide change
+	_art_rect.modulate.a = 0.0
+	var tw: Tween = create_tween()
+	tw.tween_property(_art_rect, "modulate:a", 1.0, 0.35).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_SINE)
 
 
 func _rebuild_dots() -> void:
@@ -437,26 +494,32 @@ func _update_ken_burns(t_sec: float) -> void:
 	var frac: float = clampf(t_sec / 6.5, 0.0, 1.0)
 	var ease_frac: float = frac * frac * (3.0 - 2.0 * frac)
 
-	var p_from: Vector2 = slide.get("pan_from", Vector2.ZERO) as Vector2
-	var p_to: Vector2 = slide.get("pan_to", Vector2.ZERO) as Vector2
-	var has_pan: bool = p_from.length_squared() > 0.01 or p_to.length_squared() > 0.01
-	var min_zoom: float = 1.08 if has_pan else 1.0
-
-	var z_from: float = maxf(float(slide.get("zoom_from", 1.08)), min_zoom)
-	var z_to: float = maxf(float(slide.get("zoom_to", 1.18)), min_zoom)
-
-	var zoom_val: float = maxf(lerpf(z_from, z_to, ease_frac), min_zoom)
-	var pan_val: Vector2 = p_from.lerp(p_to, ease_frac)
-
-	var max_pan: Vector2 = (_art_rect.size * maxf(0.0, zoom_val - 1.0)) * 0.5
-	pan_val = Vector2(
-		clampf(pan_val.x, -max_pan.x, max_pan.x),
-		clampf(pan_val.y, -max_pan.y, max_pan.y)
-	)
-
 	_art_rect.pivot_offset = _art_rect.size * 0.5
-	_art_rect.scale = Vector2(zoom_val, zoom_val)
-	_art_rect.position = pan_val
+
+	if _art_is_landscape:
+		# Gentle full-bleed Ken Burns for 16:9 landscape artwork
+		var z_from: float = clampf(float(slide.get("zoom_from", 1.04)), 1.04, 1.12)
+		var z_to: float = clampf(float(slide.get("zoom_to", 1.10)), 1.04, 1.14)
+		var zoom_val: float = lerpf(z_from, z_to, ease_frac)
+		var p_from: Vector2 = slide.get("pan_from", Vector2.ZERO) as Vector2
+		var p_to: Vector2 = slide.get("pan_to", Vector2.ZERO) as Vector2
+		var pan_val: Vector2 = p_from.lerp(p_to, ease_frac) * 0.6
+		var max_pan: Vector2 = (_art_rect.size * maxf(0.0, zoom_val - 1.0)) * 0.45
+		pan_val = Vector2(
+			clampf(pan_val.x, -max_pan.x, max_pan.x),
+			clampf(pan_val.y, -max_pan.y, max_pan.y)
+		)
+		_art_rect.scale = Vector2(zoom_val, zoom_val)
+		_art_rect.position = pan_val
+	else:
+		# Uncropped centered storybook framing with gentle breathing zoom for portrait/square art
+		var zoom_val: float = lerpf(1.00, 1.05, ease_frac)
+		_art_rect.scale = Vector2(zoom_val, zoom_val)
+		_art_rect.position = Vector2.ZERO
+		if _bg_art != null and _bg_art.visible:
+			_bg_art.pivot_offset = _bg_art.size * 0.5
+			var bg_zoom: float = lerpf(1.12, 1.20, ease_frac)
+			_bg_art.scale = Vector2(bg_zoom, bg_zoom)
 
 
 func _input(event: InputEvent) -> void:

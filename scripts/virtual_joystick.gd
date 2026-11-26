@@ -5,6 +5,7 @@ extends Control
 ## power buttons simultaneously without interference.
 
 const DEADZONE: float = 0.08
+const IDLE_ALPHA: float = 0.58
 
 @export var max_radius: float = 72.0
 @export var knob_radius: float = 30.0
@@ -16,27 +17,76 @@ var is_active: bool = false
 var _touch_index: int = -1
 var _knob_offset: Vector2 = Vector2.ZERO
 var _pulse_time: float = 0.0
+var _visual_alpha: float = IDLE_ALPHA
+var _knob_glow_tex: GradientTexture2D = null
+var _knob_body_tex: GradientTexture2D = null
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	custom_minimum_size = Vector2(max_radius * 2.0 + 36.0, max_radius * 2.0 + 36.0)
 	size = custom_minimum_size
+	_build_knob_textures()
 	queue_redraw()
 
 
+func _build_knob_textures() -> void:
+	var glow_grad: Gradient = Gradient.new()
+	glow_grad.offsets = PackedFloat32Array([0.0, 0.42, 0.78, 1.0])
+	glow_grad.colors = PackedColorArray([
+		Color(1.0, 0.70, 0.40, 0.68),
+		Color(1.0, 0.50, 0.28, 0.34),
+		Color(0.98, 0.36, 0.26, 0.10),
+		Color(0.98, 0.34, 0.24, 0.0),
+	])
+	_knob_glow_tex = GradientTexture2D.new()
+	_knob_glow_tex.width = 64
+	_knob_glow_tex.height = 64
+	_knob_glow_tex.fill = GradientTexture2D.FILL_RADIAL
+	_knob_glow_tex.fill_from = Vector2(0.5, 0.5)
+	_knob_glow_tex.fill_to = Vector2(1.0, 0.5)
+	_knob_glow_tex.gradient = glow_grad
+
+	var body_grad: Gradient = Gradient.new()
+	body_grad.offsets = PackedFloat32Array([0.0, 0.32, 0.72, 0.94, 1.0])
+	body_grad.colors = PackedColorArray([
+		Color(1.0, 0.95, 0.80, 1.0),
+		Color(1.0, 0.74, 0.45, 0.98),
+		Color(0.96, 0.42, 0.34, 0.94),
+		Color(0.86, 0.28, 0.34, 0.86),
+		Color(0.86, 0.28, 0.34, 0.0),
+	])
+	_knob_body_tex = GradientTexture2D.new()
+	_knob_body_tex.width = 64
+	_knob_body_tex.height = 64
+	_knob_body_tex.fill = GradientTexture2D.FILL_RADIAL
+	_knob_body_tex.fill_from = Vector2(0.38, 0.36)
+	_knob_body_tex.fill_to = Vector2(0.92, 0.88)
+	_knob_body_tex.gradient = body_grad
+
+
 func _process(delta: float) -> void:
-	_pulse_time += delta
+	var target_alpha: float = 1.0 if is_active else IDLE_ALPHA
+	var alpha_animating: bool = absf(_visual_alpha - target_alpha) > 0.005
 	if is_active:
+		_pulse_time += delta
+		_visual_alpha = lerpf(_visual_alpha, target_alpha, 1.0 - exp(-delta * 14.0))
+		queue_redraw()
+	elif alpha_animating:
+		_visual_alpha = lerpf(_visual_alpha, target_alpha, 1.0 - exp(-delta * 10.0))
+		if absf(_visual_alpha - target_alpha) <= 0.005:
+			_visual_alpha = target_alpha
 		queue_redraw()
 
 
 func reset_touch() -> void:
+	var changed: bool = is_active or _touch_index != -1 or _knob_offset != Vector2.ZERO
 	_touch_index = -1
 	is_active = false
 	_knob_offset = Vector2.ZERO
 	output_vector = Vector2.ZERO
-	queue_redraw()
+	if changed:
+		queue_redraw()
 
 
 func reset_stick() -> void:
@@ -93,31 +143,44 @@ func _update_stick_from_global(global_pos: Vector2) -> void:
 
 func _draw() -> void:
 	var center: Vector2 = size * 0.5
-	var active_alpha: float = 1.0 if is_active else 0.62
+	var a: float = _visual_alpha
 
-	# Translucent base disc
-	draw_circle(center, max_radius + 6.0, Color(0.03, 0.09, 0.14, 0.28 * active_alpha))
-	draw_circle(center, max_radius, Color(0.05, 0.15, 0.22, 0.34 * active_alpha))
+	# Translucent glassmorphic base disc
+	draw_circle(center, max_radius + 5.0, Color(0.02, 0.07, 0.12, 0.24 * a))
+	draw_circle(center, max_radius, Color(0.04, 0.12, 0.20, 0.34 * a))
 
 	# Outer bioluminescent ring
-	var ring_col: Color = Color(0.55, 0.90, 0.92, 0.45 * active_alpha)
+	var ring_col: Color = Color(0.55, 0.90, 0.92, 0.42 * a)
 	if is_active:
-		ring_col = Color(1.0, 0.72, 0.48, 0.62)
-	draw_arc(center, max_radius, 0.0, TAU, 48, ring_col, 2.5, true)
+		ring_col = Color(1.0, 0.72, 0.48, 0.68 * a)
+	draw_arc(center, max_radius, 0.0, TAU, 48, ring_col, 2.2, true)
 
 	# Subtle cardinal guide ticks
-	var tick_col: Color = Color(0.75, 0.95, 0.96, 0.24 * active_alpha)
+	var tick_col: Color = Color(0.75, 0.95, 0.96, 0.24 * a)
 	for i in range(4):
 		var ang: float = float(i) * PI * 0.5
 		var dir: Vector2 = Vector2(cos(ang), sin(ang))
-		draw_line(center + dir * (max_radius - 10.0), center + dir * (max_radius - 3.0), tick_col, 2.0, true)
+		draw_line(center + dir * (max_radius - 10.0), center + dir * (max_radius - 3.0), tick_col, 1.8, true)
 
-	# Warm glowing lava thumbstick knob
+	# Soft radial-gradient glowing lava thumbstick knob
 	var knob_pos: Vector2 = center + _knob_offset
-	var glow_pulse: float = 1.0 + (0.08 * sin(_pulse_time * 5.0) if is_active else 0.0)
-	draw_circle(knob_pos, knob_radius * 1.48 * glow_pulse, Color(1.0, 0.46, 0.28, 0.18 * active_alpha))
-	draw_circle(knob_pos, knob_radius * 1.18 * glow_pulse, Color(1.0, 0.56, 0.32, 0.34 * active_alpha))
-	draw_circle(knob_pos, knob_radius, Color(0.96, 0.40, 0.34, 0.88 * active_alpha))
-	draw_circle(knob_pos, knob_radius * 0.72, Color(1.0, 0.74, 0.46, 0.92 * active_alpha))
-	draw_circle(knob_pos + Vector2(-knob_radius * 0.24, -knob_radius * 0.24), knob_radius * 0.24, Color(1.0, 0.95, 0.84, 0.78 * active_alpha))
-	draw_arc(knob_pos, knob_radius, 0.0, TAU, 32, Color(1.0, 0.86, 0.66, 0.65 * active_alpha), 1.8, true)
+	var glow_pulse: float = 1.0 + (0.07 * sin(_pulse_time * 5.0) if is_active else 0.0)
+	var glow_r: float = knob_radius * 1.75 * glow_pulse
+	if _knob_glow_tex != null:
+		draw_texture_rect(
+			_knob_glow_tex,
+			Rect2(knob_pos - Vector2(glow_r, glow_r), Vector2(glow_r * 2.0, glow_r * 2.0)),
+			false,
+			Color(1.0, 1.0, 1.0, a * (0.95 if is_active else 0.65))
+		)
+	if _knob_body_tex != null:
+		var body_r: float = knob_radius * 1.04
+		draw_texture_rect(
+			_knob_body_tex,
+			Rect2(knob_pos - Vector2(body_r, body_r), Vector2(body_r * 2.0, body_r * 2.0)),
+			false,
+			Color(1.0, 1.0, 1.0, a)
+		)
+	else:
+		draw_circle(knob_pos, knob_radius, Color(0.96, 0.40, 0.34, 0.88 * a))
+	draw_arc(knob_pos, knob_radius, 0.0, TAU, 36, Color(1.0, 0.88, 0.70, 0.62 * a), 1.6, true)

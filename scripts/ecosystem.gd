@@ -1,7 +1,7 @@
 class_name Ecosystem
 extends Node2D
 ## Manages spawning, AI behaviors (prey fleeing, dodgeable predator pursuit, wandering),
-## smooth fade-in, and viewport despawning for ~28 balanced creatures around Charlie.
+## smooth fade-in, viewport culling, and despawning for ~28 balanced creatures around Charlie.
 
 const TARGET_COUNT: int = 28
 const EDIBLE_RATIO: float = 0.96
@@ -11,6 +11,11 @@ var difficulty: String = "chill"
 
 var _creatures: Array[Creature] = []
 var _current_scale_idx: int = 0
+var _step_result: Dictionary = {
+	"nearest_prey": null,
+	"nearest_predator": null,
+	"predator_chasing": false,
+}
 
 
 func set_difficulty(mode: String) -> void:
@@ -27,6 +32,7 @@ func set_difficulty(mode: String) -> void:
 
 func reset_for_scale(charlie: Charlie, scale_idx: int) -> void:
 	_current_scale_idx = clampi(scale_idx, 0, Scales.NUM_SCALES - 1)
+	Creature.preload_scale(_current_scale_idx)
 	for c: Creature in _creatures:
 		if is_instance_valid(c):
 			c.queue_free()
@@ -61,16 +67,17 @@ func step_ecosystem(
 	view_size_world: Vector2,
 	scale_idx: int
 ) -> Dictionary:
-	var result: Dictionary = {
-		"nearest_prey": null,
-		"nearest_predator": null,
-		"predator_chasing": false,
-	}
+	_step_result["nearest_prey"] = null
+	_step_result["nearest_predator"] = null
+	_step_result["predator_chasing"] = false
 	if charlie == null:
-		return result
+		return _step_result
 
 	var step_dt: float = clampf(dt, 0.0, 0.05)
-	_current_scale_idx = clampi(scale_idx, 0, Scales.NUM_SCALES - 1)
+	var next_scale: int = clampi(scale_idx, 0, Scales.NUM_SCALES - 1)
+	if next_scale != _current_scale_idx:
+		_current_scale_idx = next_scale
+		Creature.preload_scale(_current_scale_idx)
 
 	var preset: Dictionary = _get_preset()
 	var speed_scale: float = float(preset.get("speed_scale", 1.0))
@@ -79,11 +86,19 @@ func step_ecosystem(
 	var chase_mult: float = float(preset.get("chase_mult", 1.0))
 	var show_halo: bool = bool(preset.get("show_danger_halo", true))
 
+	var charlie_size: float = charlie.world_size
+	var charlie_pos: Vector2 = charlie.position
 	var view_half: Vector2 = Vector2(
-		maxf(view_size_world.x * 0.5, charlie.world_size * 10.0),
-		maxf(view_size_world.y * 0.5, charlie.world_size * 6.5)
+		maxf(view_size_world.x * 0.5, charlie_size * 10.0),
+		maxf(view_size_world.y * 0.5, charlie_size * 6.5)
 	)
-	var despawn_radius: float = view_half.length() * 1.48
+	var view_half_len: float = view_half.length()
+	var despawn_radius_sq: float = (view_half_len * 1.48) * (view_half_len * 1.48)
+	var visible_base_r: float = view_half_len * 1.12
+	var min_keep_size: float = charlie_size * 0.14
+	var max_keep_size: float = charlie_size * 3.4
+	var edible_thresh: float = charlie_size * EDIBLE_RATIO
+	var pred_thresh: float = charlie_size * PREDATOR_RATIO
 
 	var nearest_prey: Creature = null
 	var nearest_prey_dist: float = INF
@@ -105,31 +120,35 @@ func step_ecosystem(
 			idx -= 1
 			continue
 
-		var to_charlie: Vector2 = charlie.position - c.position
-		var dist: float = to_charlie.length()
+		var to_charlie: Vector2 = charlie_pos - c.position
+		var dist_sq: float = to_charlie.length_squared()
 
 		# Despawn if drifted well outside the active viewport or hopelessly tiny/huge
-		var too_small: bool = c.world_size < charlie.world_size * 0.14
-		var too_huge: bool = c.world_size > charlie.world_size * 3.4
-		if dist > despawn_radius or too_small or too_huge:
+		if dist_sq > despawn_radius_sq or c.world_size < min_keep_size or c.world_size > max_keep_size:
 			c.queue_free()
 			_creatures.remove_at(idx)
 			idx -= 1
 			continue
 
-		# Smooth edge fade-in
-		c.alpha = minf(1.0, c.alpha + step_dt * 1.9)
-		c.modulate.a = c.alpha
-		c.burn_flash = maxf(0.0, c.burn_flash - step_dt * 3.4)
+		var dist: float = sqrt(dist_sq)
+
+		# Smooth edge fade-in & status decay
+		if c.alpha < 1.0:
+			c.alpha = minf(1.0, c.alpha + step_dt * 1.9)
+			c.modulate.a = c.alpha
+		if c.burn_flash > 0.0:
+			c.burn_flash = maxf(0.0, c.burn_flash - step_dt * 3.4)
+		if c.stun_timer > 0.0:
+			c.stun_timer = maxf(0.0, c.stun_timer - step_dt)
 
 		# Classify relative to Charlie
-		var edible: bool = c.world_size < charlie.world_size * EDIBLE_RATIO
-		var predator: bool = c.world_size >= charlie.world_size * PREDATOR_RATIO
+		var edible: bool = c.world_size < edible_thresh
+		var predator: bool = c.world_size >= pred_thresh
 		c.is_edible = edible
 		c.is_predator = predator
 		c.show_danger_halo = show_halo
 
-		var halo_range: float = maxf(charlie.world_size * 5.2, c.world_size * 3.8)
+		var halo_range: float = maxf(charlie_size * 5.2, c.world_size * 3.8)
 		c.proximity_ratio = clampf(1.0 - (dist / maxf(halo_range, 1.0)), 0.0, 1.0)
 
 		if edible and dist < nearest_prey_dist:
@@ -141,7 +160,7 @@ func step_ecosystem(
 
 		# Compute creature AI steering
 		var spec_speed: float = float(c.species.get("speed", 1.0))
-		var base_speed: float = charlie.world_size * 2.65 * spec_speed * speed_scale
+		var base_speed: float = charlie_size * 2.65 * spec_speed * speed_scale
 		var behavior: String = str(c.species.get("behavior", "roam"))
 
 		var desired_dir: Vector2 = _step_ambient_direction(c, behavior, step_dt)
@@ -150,7 +169,7 @@ func step_ecosystem(
 
 		# Prey fleeing when Charlie approaches
 		if edible and prey_flee:
-			var flee_range: float = charlie.world_size * 4.4
+			var flee_range: float = charlie_size * 4.4
 			if dist < flee_range and dist > 0.001:
 				var away_dir: Vector2 = -to_charlie / dist
 				var panic: float = clampf(1.0 - (dist / flee_range), 0.0, 1.0)
@@ -160,12 +179,12 @@ func step_ecosystem(
 
 		# Dodgeable predator pursuit (bounded turn rate & speed so Charlie can juke)
 		elif predator and predator_chase and chase_mult > 0.0 and charlie.invuln_timer <= 0.0:
-			var aggro_range: float = maxf(charlie.world_size * 6.4, c.world_size * 4.6)
+			var aggro_range: float = maxf(charlie_size * 6.4, c.world_size * 4.6)
 			if dist < aggro_range and dist > 0.001:
 				var chase_dir: Vector2 = to_charlie / dist
 				desired_dir = chase_dir
 				# Capped below Charlie's max swim speed (~5.6 * world_size) to remain dodgeable
-				var max_chase_speed: float = charlie.world_size * 4.15 * chase_mult
+				var max_chase_speed: float = charlie_size * 4.15 * chase_mult
 				target_speed = minf(base_speed * (1.25 * chase_mult), max_chase_speed)
 				turn_rate = 2.6 * chase_mult
 				predator_chasing = true
@@ -180,29 +199,35 @@ func step_ecosystem(
 		c.velocity = c.velocity.lerp(target_vel, 1.0 - exp(-5.5 * step_dt))
 		c.position += c.velocity * step_dt
 		c.phase += step_dt * (1.4 + spec_speed * 0.55)
-		c.queue_redraw()
+
+		# Viewport culling: skip GPU draw calls & sprite updates for off-screen creatures
+		var vis_r: float = visible_base_r + c.world_size * 3.0
+		var is_vis: bool = dist_sq < vis_r * vis_r
+		c.visible = is_vis
+		if is_vis:
+			c.update_visuals()
 
 		idx -= 1
 
 	# Replenish ecosystem around the outer viewport edge to maintain ~TARGET_COUNT
-	var spawn_min_r: float = view_half.length() * 1.04
-	var spawn_max_r: float = view_half.length() * 1.32
+	var spawn_min_r: float = view_half_len * 1.04
+	var spawn_max_r: float = view_half_len * 1.32
 	var spawns_this_frame: int = 0
 	while _creatures.size() < TARGET_COUNT and spawns_this_frame < 4:
 		var want_prey: bool = _should_spawn_prey()
-		var spawn_pos: Vector2 = _random_ring_point(charlie.position, spawn_min_r, spawn_max_r)
+		var spawn_pos: Vector2 = _random_ring_point(charlie_pos, spawn_min_r, spawn_max_r)
 		var spawned: Creature = _spawn_creature(charlie, _current_scale_idx, spawn_pos, want_prey)
 		if spawned != null:
 			# Nudge newly spawned creatures gently inward toward the play area
-			var inward: Vector2 = (charlie.position - spawn_pos).normalized()
+			var inward: Vector2 = (charlie_pos - spawn_pos).normalized()
 			spawned.facing_angle = inward.angle() + randf_range(-0.65, 0.65)
 			spawned.wander_angle = spawned.facing_angle
 		spawns_this_frame += 1
 
-	result["nearest_prey"] = nearest_prey
-	result["nearest_predator"] = nearest_pred
-	result["predator_chasing"] = predator_chasing
-	return result
+	_step_result["nearest_prey"] = nearest_prey
+	_step_result["nearest_predator"] = nearest_pred
+	_step_result["predator_chasing"] = predator_chasing
+	return _step_result
 
 
 func _step_ambient_direction(c: Creature, behavior: String, dt: float) -> Vector2:

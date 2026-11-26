@@ -4,12 +4,16 @@ extends Node2D
 
 const LAVA_SHADER_PATH: String = "res://shaders/lava_blob.gdshader"
 const MAX_DROPLETS: int = 3
-const BODY_QUAD_SCALE: float = 3.6
-const BODY_HALF_SCALE: float = 1.8
+const BODY_QUAD_SCALE: float = 5.2
+const BODY_HALF_SCALE: float = 2.6
 
-const COLOR_BERRY: Color = Color(0.22, 0.06, 0.13, 1.0)
-const COLOR_BERRY_INNER: Color = Color(0.36, 0.09, 0.18, 1.0)
-const COLOR_CHEEK: Color = Color(1.0, 0.45, 0.54, 0.52)
+const COLOR_EYE_DARK: Color = Color("#2a1215")
+const COLOR_IRIS_SHEEN: Color = Color(0.68, 0.34, 0.16, 0.56)
+const COLOR_SCLERA: Color = Color(1.0, 0.985, 0.97, 0.98)
+const COLOR_MOUTH_FILL: Color = Color(0.24, 0.06, 0.12, 1.0)
+const COLOR_TONGUE: Color = Color("#ff7d9e")
+const COLOR_CHEEK_OUTER: Color = Color(1.0, 0.44, 0.54, 0.26)
+const COLOR_CHEEK_INNER: Color = Color(1.0, 0.42, 0.52, 0.38)
 const COLOR_TEETH: Color = Color(1.0, 0.99, 0.96, 1.0)
 const COLOR_CATCHLIGHT: Color = Color(1.0, 1.0, 1.0, 0.95)
 
@@ -24,6 +28,7 @@ var happy_timer: float = 0.0
 var chomp_timer: float = 0.0
 var dash_timer: float = 0.0
 var scared_amount: float = 0.0
+var danger_level: float = 0.0
 var mouth_open: float = 0.0
 var blink_amount: float = 0.0
 
@@ -38,6 +43,12 @@ var _danger_pulse: float = 0.0
 var _blink_cooldown: float = 2.8
 var _blink_phase: float = 0.0
 var _dash_boost_mult: float = 1.0
+var _face_tilt: float = 0.0
+var _last_synced_size: float = -1.0
+
+var _palette_core: Color = Color(1.0, 0.78, 0.50, 1.0)
+var _palette_edge: Color = Color(0.96, 0.38, 0.42, 1.0)
+var _palette_glow: Color = Color(1.0, 0.50, 0.28, 1.0)
 
 var _drop_world_pos: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO]
 var _drop_world_vel: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO]
@@ -46,6 +57,8 @@ var _drop_local_uv: Array[Vector2] = [
 	Vector2(-0.62, 0.0),
 	Vector2(-0.55, 0.25),
 ]
+var _drop_scales: Array[float] = [1.0, 1.0, 1.0]
+var _prev_droplets_alive: int = MAX_DROPLETS
 
 
 class _CharlieFaceOverlay extends Node2D:
@@ -83,7 +96,18 @@ func _setup_visuals() -> void:
 	_face_overlay.z_index = 1
 	add_child(_face_overlay)
 
+	_last_synced_size = -1.0
 	_sync_body_rect()
+
+
+func set_palette(core: Color, edge: Color, glow: Color = Color(1.0, 0.50, 0.28, 1.0)) -> void:
+	_palette_core = core
+	_palette_edge = edge
+	_palette_glow = glow
+	if _body_mat != null:
+		_body_mat.set_shader_parameter("core_color", _palette_core)
+		_body_mat.set_shader_parameter("edge_color", _palette_edge)
+		_body_mat.set_shader_parameter("glow_color", _palette_glow)
 
 
 func reset_charlie(pos: Vector2, new_size: float) -> void:
@@ -94,15 +118,18 @@ func reset_charlie(pos: Vector2, new_size: float) -> void:
 	look_angle = 0.0
 	invuln_timer = 0.0
 	droplets_alive = MAX_DROPLETS
+	_prev_droplets_alive = MAX_DROPLETS
 	happy_timer = 0.0
 	chomp_timer = 0.0
 	dash_timer = 0.0
 	scared_amount = 0.0
+	danger_level = 0.0
 	mouth_open = 0.0
 	blink_amount = 0.0
 	_stretch = 0.0
 	_gulp_wave = 0.0
 	_danger_pulse = 0.0
+	_face_tilt = 0.0
 	_blink_cooldown = randf_range(2.2, 4.4)
 	_blink_phase = 0.0
 
@@ -111,6 +138,7 @@ func reset_charlie(pos: Vector2, new_size: float) -> void:
 		_drop_local_uv[i] = rest_offsets[i]
 		_drop_world_pos[i] = position + rest_offsets[i] * world_size
 		_drop_world_vel[i] = Vector2.ZERO
+		_drop_scales[i] = 1.0
 
 	_sync_body_rect()
 	_update_shader_uniforms({})
@@ -142,6 +170,7 @@ func trigger_dash(dir_angle: float, level: int = 1) -> void:
 func trigger_hurt(away_angle: float) -> void:
 	invuln_timer = 1.65
 	scared_amount = 1.0
+	danger_level = 1.0
 	happy_timer = 0.0
 	chomp_timer = 0.0
 	_gulp_wave = 0.0
@@ -192,6 +221,12 @@ func step_motion(
 	var target_stretch: float = clampf(speed_norm * 0.65, 0.0, 1.15)
 	_stretch = lerpf(_stretch, target_stretch, 1.0 - exp(-10.0 * step_dt))
 
+	# Gentle playful face tilt following swim direction
+	var swim_x_sign: float = 1.0 if cos(facing_angle) >= 0.0 else -1.0
+	var vel_y_norm: float = clampf(velocity.y / maxf(base_max_speed, 1.0), -1.0, 1.0)
+	var target_tilt: float = clampf(vel_y_norm * 0.14 * swim_x_sign, -0.16, 0.16)
+	_face_tilt = lerpf(_face_tilt, target_tilt, 1.0 - exp(-9.0 * step_dt))
+
 	# Expressive reactions to nearest prey & predator
 	var prey_proximity: float = 0.0
 	var prey_angle: float = facing_angle
@@ -226,14 +261,15 @@ func step_motion(
 		target_look = prey_angle
 	look_angle = lerp_angle(look_angle, target_look, 1.0 - exp(-10.0 * step_dt))
 
-	# Scared & mouth-open interpolation
+	# Scared, danger_level & mouth-open interpolation
 	var target_scared: float = pred_threat if invuln_timer <= 0.0 else maxf(pred_threat, 0.65)
 	scared_amount = lerpf(scared_amount, target_scared, 1.0 - exp(-9.0 * step_dt))
+	danger_level = scared_amount
 
 	var target_mouth: float = 0.0
 	if chomp_timer > 0.0:
 		target_mouth = clampf(sin((chomp_timer / 0.28) * PI), 0.25, 1.0)
-	elif prey_proximity > 0.12 and scared_amount < 0.55:
+	elif prey_proximity > 0.12 and danger_level < 0.55:
 		target_mouth = clampf((prey_proximity - 0.12) * 1.15, 0.0, 0.92)
 	mouth_open = lerpf(mouth_open, target_mouth, 1.0 - exp(-14.0 * step_dt))
 
@@ -244,7 +280,7 @@ func step_motion(
 	# Periodic cute blink
 	_step_blink(step_dt)
 
-	# Spring-lag physics for tethered lava droplets
+	# Spring-lag physics & heal-bloom scaling for tethered lava droplets
 	_step_droplets(step_dt)
 
 	# Sync visuals & shader uniforms
@@ -255,13 +291,13 @@ func step_motion(
 
 
 func _step_blink(dt: float) -> void:
-	if happy_timer > 0.0 or scared_amount > 0.45:
+	if happy_timer > 0.0 or danger_level > 0.45:
 		blink_amount = 0.0
 		_blink_phase = 0.0
 		return
 
 	if _blink_phase > 0.0:
-		_blink_phase += dt / 0.14
+		_blink_phase += dt / 0.16
 		if _blink_phase >= 1.0:
 			_blink_phase = 0.0
 			blink_amount = 0.0
@@ -292,17 +328,34 @@ func _step_droplets(dt: float) -> void:
 	var safe_size: float = maxf(world_size, 1.0)
 	var stiffness_values: Array[float] = [95.0, 72.0, 90.0]
 	var damping_values: Array[float] = [11.5, 9.8, 11.2]
+	var alive_clamped: int = clampi(droplets_alive, 0, MAX_DROPLETS)
+
+	# Detect regenerated droplets and trigger smooth heal-bloom (0.08 -> 1.0)
+	if alive_clamped > _prev_droplets_alive:
+		for i: int in range(maxi(_prev_droplets_alive, 0), alive_clamped):
+			_drop_scales[i] = 0.08
+			_drop_world_pos[i] = position + rest_offsets[i] * safe_size * 0.35
+			_drop_world_vel[i] = Vector2.ZERO
+	_prev_droplets_alive = alive_clamped
 
 	for i: int in range(MAX_DROPLETS):
+		if i < alive_clamped:
+			if _drop_scales[i] < 0.999:
+				_drop_scales[i] = lerpf(_drop_scales[i], 1.0, 1.0 - exp(-7.5 * dt))
+				if _drop_scales[i] > 0.995:
+					_drop_scales[i] = 1.0
+		else:
+			_drop_scales[i] = 0.0
+
 		var target_world: Vector2 = position + rest_offsets[i] * safe_size
 		var disp: Vector2 = target_world - _drop_world_pos[i]
 		var accel: Vector2 = disp * stiffness_values[i] - _drop_world_vel[i] * damping_values[i]
 		_drop_world_vel[i] += accel * dt
 		_drop_world_pos[i] += _drop_world_vel[i] * dt
 
-		# Convert back to local shader space (-1.8..1.8) and clamp within metaball quad
+		# Convert back to local shader space (-2.6..2.6) and clamp within metaball quad
 		var local_uv: Vector2 = (_drop_world_pos[i] - position) / safe_size
-		var max_dist: float = 1.42
+		var max_dist: float = 1.48
 		if local_uv.length() > max_dist:
 			local_uv = local_uv.normalized() * max_dist
 			_drop_world_pos[i] = position + local_uv * safe_size
@@ -312,6 +365,9 @@ func _step_droplets(dt: float) -> void:
 func _sync_body_rect() -> void:
 	if _body_rect == null:
 		return
+	if is_equal_approx(world_size, _last_synced_size):
+		return
+	_last_synced_size = world_size
 	var rect_len: float = world_size * BODY_QUAD_SCALE
 	var half_len: float = world_size * BODY_HALF_SCALE
 	_body_rect.size = Vector2(rect_len, rect_len)
@@ -322,8 +378,13 @@ func _update_shader_uniforms(palette: Dictionary) -> void:
 	if _body_mat == null:
 		return
 
-	var core_col: Color = palette.get("blob_core", Color(1.0, 0.78, 0.50)) as Color
-	var edge_col: Color = palette.get("blob_edge", Color(0.96, 0.38, 0.42)) as Color
+	var core_col: Color = palette.get("blob_core", _palette_core) as Color
+	var edge_col: Color = palette.get("blob_edge", _palette_edge) as Color
+	var glow_col: Color = palette.get("blob_glow", _palette_glow) as Color
+	_palette_core = core_col
+	_palette_edge = edge_col
+	_palette_glow = glow_col
+
 	var vel_dir: Vector2 = velocity.normalized() if velocity.length_squared() > 1.0 else Vector2.from_angle(facing_angle)
 	var invuln_flash: float = 0.0
 	if invuln_timer > 0.0:
@@ -331,6 +392,7 @@ func _update_shader_uniforms(palette: Dictionary) -> void:
 
 	_body_mat.set_shader_parameter("core_color", core_col)
 	_body_mat.set_shader_parameter("edge_color", edge_col)
+	_body_mat.set_shader_parameter("glow_color", glow_col)
 	_body_mat.set_shader_parameter("vel_dir", vel_dir)
 	_body_mat.set_shader_parameter("stretch", _stretch)
 	_body_mat.set_shader_parameter("gulp_wave", _gulp_wave)
@@ -340,6 +402,55 @@ func _update_shader_uniforms(palette: Dictionary) -> void:
 	_body_mat.set_shader_parameter("drop_pos_0", _drop_local_uv[0])
 	_body_mat.set_shader_parameter("drop_pos_1", _drop_local_uv[1])
 	_body_mat.set_shader_parameter("drop_pos_2", _drop_local_uv[2])
+	_body_mat.set_shader_parameter("drop_scale_0", _drop_scales[0])
+	_body_mat.set_shader_parameter("drop_scale_1", _drop_scales[1])
+	_body_mat.set_shader_parameter("drop_scale_2", _drop_scales[2])
+
+
+func _draw_ellipse(
+	canvas: CanvasItem,
+	center: Vector2,
+	rx: float,
+	ry: float,
+	fill_color: Color,
+	segments: int = 20,
+	outline_color: Color = Color(0, 0, 0, 0),
+	outline_width: float = 0.0
+) -> void:
+	var pts: PackedVector2Array = PackedVector2Array()
+	pts.resize(segments)
+	for i: int in range(segments):
+		var a: float = (float(i) / float(segments)) * TAU
+		pts[i] = center + Vector2(cos(a) * rx, sin(a) * ry)
+	canvas.draw_colored_polygon(pts, fill_color)
+	if outline_width > 0.0 and outline_color.a > 0.001:
+		var loop_pts: PackedVector2Array = PackedVector2Array(pts)
+		loop_pts.append(pts[0])
+		canvas.draw_polyline(loop_pts, outline_color, outline_width, true)
+
+
+func _draw_rounded_tooth(
+	canvas: CanvasItem,
+	top_center: Vector2,
+	tooth_w: float,
+	tooth_h: float,
+	outline_w: float
+) -> void:
+	var hw: float = tooth_w * 0.5
+	var tip_r: float = minf(hw * 0.72, tooth_h * 0.45)
+	var pts: PackedVector2Array = PackedVector2Array([
+		top_center + Vector2(-hw, 0.0),
+		top_center + Vector2(hw, 0.0),
+		top_center + Vector2(hw * 0.86, tooth_h - tip_r),
+		top_center + Vector2(hw * 0.46, tooth_h - tip_r * 0.22),
+		top_center + Vector2(0.0, tooth_h),
+		top_center + Vector2(-hw * 0.46, tooth_h - tip_r * 0.22),
+		top_center + Vector2(-hw * 0.86, tooth_h - tip_r),
+	])
+	canvas.draw_colored_polygon(pts, COLOR_TEETH)
+	var border: PackedVector2Array = PackedVector2Array(pts)
+	border.append(pts[0])
+	canvas.draw_polyline(border, COLOR_EYE_DARK, outline_w, true)
 
 
 func _draw_face(canvas: CanvasItem) -> void:
@@ -349,80 +460,111 @@ func _draw_face(canvas: CanvasItem) -> void:
 
 	var look_vec: Vector2 = Vector2.from_angle(look_angle)
 	var face_center: Vector2 = look_vec * (r * 0.22)
+
+	# Apply gentle playful face tilt around face_center
+	canvas.draw_set_transform(face_center, _face_tilt, Vector2.ONE)
+
 	var eye_sep: float = r * 0.34
-	var eye_y: float = face_center.y - r * 0.06
-	var left_eye: Vector2 = Vector2(face_center.x - eye_sep, eye_y)
-	var right_eye: Vector2 = Vector2(face_center.x + eye_sep, eye_y)
+	var eye_y: float = -r * 0.07
+	var left_eye: Vector2 = Vector2(-eye_sep, eye_y)
+	var right_eye: Vector2 = Vector2(eye_sep, eye_y)
+	var stroke_w: float = maxf(1.4, r * 0.055)
 
-	# Soft rosy cheeks
-	var cheek_r: float = r * 0.17
-	var cheek_y: float = eye_y + r * 0.22
-	canvas.draw_circle(Vector2(face_center.x - eye_sep * 1.28, cheek_y), cheek_r, COLOR_CHEEK)
-	canvas.draw_circle(Vector2(face_center.x + eye_sep * 1.28, cheek_y), cheek_r, COLOR_CHEEK)
+	# Soft layered elliptical rosy cheeks (2 concentric translucent ellipses each)
+	var cheek_y: float = eye_y + r * 0.23
+	for side_sign: float in [-1.0, 1.0]:
+		var cheek_pos: Vector2 = Vector2(side_sign * eye_sep * 1.28, cheek_y)
+		_draw_ellipse(canvas, cheek_pos, r * 0.21, r * 0.135, COLOR_CHEEK_OUTER, 18)
+		_draw_ellipse(canvas, cheek_pos, r * 0.13, r * 0.082, COLOR_CHEEK_INNER, 16)
 
-	# Eyes: happy ^ ^ crescents, blinking lines, or glossy dark-berry orbs
-	var eye_r: float = r * (0.195 + scared_amount * 0.045)
+	# Eyes: happy ^ ^ crescents, white-sclera alarmed state, or storybook glossy oval eyes
+	var eye_r: float = r * (0.195 + danger_level * 0.04)
+	var alarmed: bool = danger_level > 0.45
 	if happy_timer > 0.0:
-		var arc_w: float = maxf(2.0, r * 0.095)
-		canvas.draw_arc(left_eye + Vector2(0.0, eye_r * 0.25), eye_r * 0.85, PI * 1.15, PI * 1.85, 14, COLOR_BERRY, arc_w, true)
-		canvas.draw_arc(right_eye + Vector2(0.0, eye_r * 0.25), eye_r * 0.85, PI * 1.15, PI * 1.85, 14, COLOR_BERRY, arc_w, true)
-	elif blink_amount > 0.55:
-		var line_w: float = maxf(1.8, r * 0.085)
-		canvas.draw_line(left_eye - Vector2(eye_r, 0.0), left_eye + Vector2(eye_r, 0.0), COLOR_BERRY, line_w, true)
-		canvas.draw_line(right_eye - Vector2(eye_r, 0.0), right_eye + Vector2(eye_r, 0.0), COLOR_BERRY, line_w, true)
-	else:
-		var pupil_shift: Vector2 = look_vec * (eye_r * 0.22)
+		var arc_w: float = maxf(2.0, r * 0.092)
+		canvas.draw_arc(left_eye + Vector2(0.0, eye_r * 0.24), eye_r * 0.86, PI * 1.14, PI * 1.86, 16, COLOR_EYE_DARK, arc_w, true)
+		canvas.draw_arc(right_eye + Vector2(0.0, eye_r * 0.24), eye_r * 0.86, PI * 1.14, PI * 1.86, 16, COLOR_EYE_DARK, arc_w, true)
+	elif alarmed:
+		var pupil_shift: Vector2 = look_vec * (eye_r * 0.26)
+		var sclera_rx: float = eye_r * 1.02
+		var sclera_ry: float = eye_r * 1.22
 		for eye_pos: Vector2 in [left_eye, right_eye]:
-			# Outer glossy dark-berry eye
-			canvas.draw_circle(eye_pos, eye_r, COLOR_BERRY)
-			# Primary top-left white catchlight
-			var hi_pos: Vector2 = eye_pos + pupil_shift * 0.45 + Vector2(-eye_r * 0.32, -eye_r * 0.34)
-			canvas.draw_circle(hi_pos, eye_r * (0.34 if scared_amount < 0.4 else 0.42), COLOR_CATCHLIGHT)
-			# Secondary tiny lower-right sparkle
-			var hi2_pos: Vector2 = eye_pos + Vector2(eye_r * 0.28, eye_r * 0.26)
-			canvas.draw_circle(hi2_pos, eye_r * 0.14, COLOR_CATCHLIGHT)
-
-	# Mouth with Charlie's two crisp little white teeth!
-	var mouth_center: Vector2 = Vector2(face_center.x, face_center.y + r * 0.24)
-	if scared_amount > 0.5 and mouth_open < 0.2:
-		# Cute worried 'o' mouth
-		canvas.draw_circle(mouth_center + Vector2(0.0, r * 0.03), r * 0.12, COLOR_BERRY)
-	elif mouth_open > 0.16:
-		# Open chomp mouth (D-shape / rounded oval) + 2 crisp little white teeth
-		var mw: float = r * lerpf(0.24, 0.38, mouth_open)
-		var mh: float = r * lerpf(0.10, 0.34, mouth_open)
-		var mouth_pts: PackedVector2Array = PackedVector2Array()
-		var top_y: float = mouth_center.y - mh * 0.28
-		mouth_pts.append(Vector2(mouth_center.x - mw, top_y))
-		mouth_pts.append(Vector2(mouth_center.x + mw, top_y))
-		var steps: int = 12
-		for s: int in range(1, steps):
-			var t: float = float(s) / float(steps)
-			var ang: float = t * PI
-			var px: float = mouth_center.x + cos(ang) * mw
-			var py: float = top_y + sin(ang) * mh * 1.15
-			mouth_pts.append(Vector2(px, py))
-		canvas.draw_colored_polygon(mouth_pts, COLOR_BERRY)
-
-		# Inner tongue highlight when wide open
-		if mouth_open > 0.42:
-			canvas.draw_circle(Vector2(mouth_center.x, top_y + mh * 0.72), mw * 0.36, COLOR_BERRY_INNER)
-
-		# Two crisp little white teeth anchored at the upper lip
-		var tooth_w: float = mw * 0.28
-		var tooth_h: float = maxf(mh * 0.44, r * 0.11)
-		var tooth_gap: float = mw * 0.34
-		for side_sign: float in [-1.0, 1.0]:
-			var tx: float = mouth_center.x + side_sign * tooth_gap
-			var tooth_poly: PackedVector2Array = PackedVector2Array([
-				Vector2(tx - tooth_w * 0.55, top_y),
-				Vector2(tx + tooth_w * 0.55, top_y),
-				Vector2(tx + side_sign * tooth_w * 0.08, top_y + tooth_h),
-			])
-			canvas.draw_colored_polygon(tooth_poly, COLOR_TEETH)
+			_draw_ellipse(canvas, eye_pos, sclera_rx, sclera_ry, COLOR_SCLERA, 22, COLOR_EYE_DARK, stroke_w)
+			var pupil_pos: Vector2 = eye_pos + pupil_shift
+			_draw_ellipse(canvas, pupil_pos, eye_r * 0.56, eye_r * 0.66, COLOR_EYE_DARK, 18)
+			canvas.draw_circle(pupil_pos + Vector2(-eye_r * 0.20, -eye_r * 0.24), eye_r * 0.22, COLOR_CATCHLIGHT)
 	else:
-		# Relaxed cute smile with two tiny peeking white teeth
-		var smile_w: float = r * 0.26
+		# Smooth continuous vertical-squash blink
+		var open_y: float = clampf(1.0 - blink_amount * 0.92, 0.08, 1.0)
+		var eye_rx: float = eye_r * 0.90
+		var eye_ry: float = eye_r * 1.12 * open_y
+		if open_y <= 0.14:
+			var lid_w: float = maxf(1.8, r * 0.082)
+			for eye_pos: Vector2 in [left_eye, right_eye]:
+				canvas.draw_arc(eye_pos - Vector2(0.0, eye_r * 0.22), eye_rx * 0.95, PI * 0.18, PI * 0.82, 12, COLOR_EYE_DARK, lid_w, true)
+		else:
+			var pupil_shift: Vector2 = look_vec * (eye_r * 0.18)
+			for eye_pos: Vector2 in [left_eye, right_eye]:
+				# Vertically oval deep dark-chocolate eye
+				_draw_ellipse(canvas, eye_pos, eye_rx, eye_ry, COLOR_EYE_DARK, 22)
+				# Warm amber-chestnut lower iris sheen
+				var sheen_pos: Vector2 = eye_pos + Vector2(pupil_shift.x * 0.35, eye_ry * 0.30)
+				_draw_ellipse(canvas, sheen_pos, eye_rx * 0.64, eye_ry * 0.42, COLOR_IRIS_SHEEN, 16)
+				# Crisp top-left primary catchlight + bottom-right secondary sparkle
+				var hi_pos: Vector2 = eye_pos + pupil_shift * 0.40 + Vector2(-eye_rx * 0.32, -eye_ry * 0.34)
+				_draw_ellipse(canvas, hi_pos, eye_r * 0.31, eye_r * 0.31 * open_y, COLOR_CATCHLIGHT, 14)
+				var hi2_pos: Vector2 = eye_pos + Vector2(eye_rx * 0.30, eye_ry * 0.28)
+				_draw_ellipse(canvas, hi2_pos, eye_r * 0.13, eye_r * 0.13 * open_y, COLOR_CATCHLIGHT, 10)
+
+	# Expressive mouth with Charlie's two rounded dark-outlined white teeth
+	var mouth_center: Vector2 = Vector2(0.0, r * 0.24)
+	var tooth_outline: float = maxf(1.0, r * 0.036)
+	if alarmed and mouth_open < 0.22:
+		# Worried 'o' mouth with tiny peeking teeth
+		var o_rx: float = r * 0.145
+		var o_ry: float = r * 0.165
+		var o_pos: Vector2 = mouth_center + Vector2(0.0, r * 0.04)
+		_draw_ellipse(canvas, o_pos, o_rx, o_ry, COLOR_MOUTH_FILL, 18, COLOR_EYE_DARK, stroke_w)
+		_draw_ellipse(canvas, o_pos + Vector2(0.0, o_ry * 0.42), o_rx * 0.56, o_ry * 0.34, COLOR_TONGUE, 12)
+		var tiny_tw: float = o_rx * 0.48
+		var tiny_th: float = o_ry * 0.44
+		var lip_y: float = o_pos.y - o_ry * 0.72
+		for side_sign: float in [-1.0, 1.0]:
+			_draw_rounded_tooth(canvas, Vector2(side_sign * o_rx * 0.34, lip_y), tiny_tw, tiny_th, tooth_outline)
+	elif mouth_open > 0.16:
+		# Dark-berry outlined open mouth with bright pink tongue and rounded white teeth
+		var mw: float = r * lerpf(0.25, 0.39, mouth_open)
+		var mh: float = r * lerpf(0.11, 0.35, mouth_open)
+		var top_y: float = mouth_center.y - mh * 0.28
+		var mouth_pts: PackedVector2Array = PackedVector2Array()
+		mouth_pts.append(Vector2(-mw, top_y))
+		mouth_pts.append(Vector2(mw, top_y))
+		var steps: int = 16
+		for s: int in range(1, steps):
+			var t_ang: float = (float(s) / float(steps)) * PI
+			mouth_pts.append(Vector2(cos(t_ang) * mw, top_y + sin(t_ang) * mh * 1.15))
+		canvas.draw_colored_polygon(mouth_pts, COLOR_MOUTH_FILL)
+
+		# Bright pink tongue nestled in the lower cavity
+		if mouth_open > 0.32:
+			var tongue_rx: float = mw * 0.54
+			var tongue_ry: float = mh * 0.36
+			_draw_ellipse(canvas, Vector2(0.0, top_y + mh * 0.76), tongue_rx, tongue_ry, COLOR_TONGUE, 14)
+
+		# Crisp dark-berry mouth outline
+		var mouth_outline: PackedVector2Array = PackedVector2Array(mouth_pts)
+		mouth_outline.append(mouth_pts[0])
+		canvas.draw_polyline(mouth_outline, COLOR_EYE_DARK, stroke_w, true)
+
+		# Two rounded dark-outlined white teeth anchored at the upper lip
+		var tooth_w: float = mw * 0.30
+		var tooth_h: float = maxf(mh * 0.44, r * 0.11)
+		var tooth_gap: float = mw * 0.33
+		for side_sign: float in [-1.0, 1.0]:
+			_draw_rounded_tooth(canvas, Vector2(side_sign * tooth_gap, top_y), tooth_w, tooth_h, tooth_outline)
+	else:
+		# Relaxed cute smile with two rounded peeking white teeth
+		var smile_w: float = r * 0.27
 		var smile_h: float = r * 0.16
 		var smile_lw: float = maxf(1.8, r * 0.08)
 		canvas.draw_arc(
@@ -430,22 +572,19 @@ func _draw_face(canvas: CanvasItem) -> void:
 			smile_w * 0.92,
 			PI * 0.16,
 			PI * 0.84,
-			14,
-			COLOR_BERRY,
+			16,
+			COLOR_EYE_DARK,
 			smile_lw,
 			true
 		)
-		var tooth_w: float = r * 0.075
-		var tooth_h: float = r * 0.085
-		var smile_top: float = mouth_center.y + smile_h * 0.18
+		var tooth_w: float = r * 0.088
+		var tooth_h: float = r * 0.092
+		var smile_top: float = mouth_center.y + smile_h * 0.14
 		for side_sign: float in [-1.0, 1.0]:
-			var tx: float = mouth_center.x + side_sign * (smile_w * 0.36)
-			var tooth_poly: PackedVector2Array = PackedVector2Array([
-				Vector2(tx - tooth_w * 0.5, smile_top),
-				Vector2(tx + tooth_w * 0.5, smile_top),
-				Vector2(tx, smile_top + tooth_h),
-			])
-			canvas.draw_colored_polygon(tooth_poly, COLOR_TEETH)
+			_draw_rounded_tooth(canvas, Vector2(side_sign * (smile_w * 0.36), smile_top), tooth_w, tooth_h, tooth_outline)
+
+	# Reset transform so parent canvas state stays clean
+	canvas.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 func _extract_entity_pos(entity: Variant) -> Vector2:
