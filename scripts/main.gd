@@ -1011,12 +1011,12 @@ func _setup_world() -> void:
 	var env: Environment = Environment.new()
 	env.background_mode = Environment.BG_CANVAS
 	env.background_canvas_max_layer = 5
-	if ClassDB.class_has_integer_constant(&"Environment", &"TONE_MAPPER_AGX"):
-		env.tonemap_mode = ClassDB.class_get_integer_constant(&"Environment", &"TONE_MAPPER_AGX") as Environment.ToneMapper
-	else:
-		env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	# Calm, matte look (user feedback: "Charlie et la carte brillent trop"):
+	# linear tonemap + no screen bloom so the Vulkan Mobile device render matches
+	# the soft authored colors instead of blowing highlights out to white.
+	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
 	env.tonemap_exposure = 1.0
-	env.glow_enabled = true
+	env.glow_enabled = false
 	env.glow_normalized = true
 	env.glow_hdr_threshold = 1.22
 	env.glow_intensity = 0.30
@@ -3390,6 +3390,11 @@ func _run_visual_capture(out_dir: String) -> void:
 	_prepare_capture_world(0, Vector2(0.84, -0.18))
 	await _wait_capture_frames(16)
 	_save_capture_png(out_dir, "03_quantum.png")
+
+	# 3b. Live World II Microscopique gameplay (dewdrop meniscus + caustics + kelp)
+	_prepare_capture_world(1, Vector2(0.84, -0.16))
+	await _wait_capture_frames(16)
+	_save_capture_png(out_dir, "03b_micro.png")
 
 	# 4. Live World III Sous-Bois gameplay (4-plane forest depth + moonlight + fireflies)
 	_prepare_capture_world(2, Vector2(0.82, -0.16))

@@ -110,7 +110,7 @@ void fragment() {
 	vec3 unpremul_3d = (a_c > 0.008) ? clamp(tex_3d.rgb / a_c, vec3(0.0), vec3(1.0)) : rich_coral;
 	vec3 fg_rgb = mix(unpremul_3d * eff_alpha, tex_3d.rgb, inside_fill);
 
-	vec3 body_comp = fg_rgb + sss_col * (transmittance * 0.78) + bg_refr * (transmittance * 0.30);
+	vec3 body_comp = fg_rgb + sss_col * (transmittance * 0.56) + bg_refr * (transmittance * 0.24);
 
 	// Soft, smooth, feathered warm coral-amber outer bioluminescent glow (exp(-dist * 3.8), zero quad clipping)
 	float blur_sil = a_c * 0.22 + ring1 * 0.34 + ring2 * 0.26 + ring3 * 0.18;
@@ -121,7 +121,7 @@ void fragment() {
 	float breath_glow = 0.94 + 0.06 * sin(time_sec * 2.7);
 	float vit_glow = mix(0.36, 1.0, vit);
 	float aura_field = clamp(blur_sil * 0.56 + exp_falloff * (0.28 + 0.72 * clamp(blur_sil * 2.2, 0.0, 1.0)) * 0.48, 0.0, 1.0);
-	float aura_alpha = clamp(aura_field * aura_intensity * vit_glow * breath_glow * quad_fade, 0.0, 0.66);
+	float aura_alpha = clamp(aura_field * aura_intensity * vit_glow * breath_glow * quad_fade, 0.0, 0.36);
 	aura_alpha *= (1.0 - clamp(invuln_flash, 0.0, 1.0) * 0.35);
 
 	vec3 aura_col = mix(vec3(1.0, 0.56, 0.26), vec3(1.0, 0.42, 0.34), 0.38);

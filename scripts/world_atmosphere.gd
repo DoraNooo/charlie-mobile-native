@@ -559,8 +559,8 @@ func _draw_mid_micro(canvas: Node2D, w: float, h: float, alpha: float) -> void:
 
 	# Translucent upper water-glass dome cap + crisp luminous HDR meniscus rim + inner caustic shimmer
 	canvas.draw_colored_polygon(_meniscus_poly_pts, Color(0.025, 0.145, 0.170, 0.44 * alpha))
-	canvas.draw_polyline(_meniscus_rim_pts, Color(0.72, 1.24, 1.16, 0.54 * alpha), 2.8, true)
-	canvas.draw_polyline(_meniscus_sub_pts, Color(0.42, 0.98, 0.88, 0.22 * alpha), 1.4, true)
+	canvas.draw_polyline(_meniscus_rim_pts, Color(0.50, 0.88, 0.84, 0.34 * alpha), 2.0, true)
+	canvas.draw_polyline(_meniscus_sub_pts, Color(0.36, 0.82, 0.76, 0.16 * alpha), 1.2, true)
 
 	# 2. 4 gently swaying translucent kelp / algal ribbons wrapping seamlessly along the bottom flanks
 	var wrap_w: float = w + 260.0
@@ -1077,12 +1077,12 @@ func _draw_volumetric_light_shafts(canvas: Node2D, w: float, h: float) -> void:
 
 	# Scale-specific shaft intensity & color harmoniously blended across crossfades
 	var shaft_tint: Color = (
-		Color(0.36, 0.94, 0.98, 0.13) * _weights[0]
-		+ Color(0.42, 1.00, 0.90, 0.25) * _weights[1]
-		+ Color(0.56, 0.98, 0.68, 0.26) * _weights[2]
-		+ Color(0.62, 0.78, 1.00, 0.11) * _weights[3]
-		+ Color(0.44, 0.80, 1.00, 0.08) * _weights[4]
-		+ Color(1.00, 0.74, 0.82, 0.11) * _weights[5]
+		Color(0.36, 0.94, 0.98, 0.08) * _weights[0]
+		+ Color(0.42, 0.95, 0.86, 0.13) * _weights[1]
+		+ Color(0.56, 0.94, 0.68, 0.14) * _weights[2]
+		+ Color(0.62, 0.78, 1.00, 0.07) * _weights[3]
+		+ Color(0.44, 0.80, 1.00, 0.05) * _weights[4]
+		+ Color(1.00, 0.74, 0.82, 0.07) * _weights[5]
 	)
 	if shaft_tint.a <= 0.005:
 		return

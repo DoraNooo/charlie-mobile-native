@@ -75,7 +75,8 @@ vec3 deform_shell(vec3 u) {
 		float axial = dot(u.xy, fdir);
 		float wave_center = mix(0.82, -0.82, gp);
 		float env = sin(gp * 3.14159265);
-		gulp_bulge = exp(-pow((axial - wave_center) * 2.35, 2.0)) * env * gulp_intensity * 0.125;
+		float gulp_d = (axial - wave_center) * 2.35;
+		gulp_bulge = exp(-(gulp_d * gulp_d)) * env * gulp_intensity * 0.125;
 	}
 
 	// Organic living jelly ripple + delicate smooth fear shiver (keeps wet highlights silky!)
@@ -87,8 +88,9 @@ vec3 deform_shell(vec3 u) {
 	// - Fuller, wider huggable warm lower belly (peaking around y = -0.28)
 	// - Soft cushioned mochi base + gentle organic breathing lobes even at rest
 	float crown_taper = smoothstep(0.20, 0.94, u.y) * 0.064;
-	float belly_plump = exp(-pow((u.y + 0.28) * 1.90, 2.0)) * (1.0 - u.y * u.y) * 0.092;
-	float base_cushion = smoothstep(-0.42, -0.94, u.y) * 0.032;
+	float belly_d = (u.y + 0.28) * 1.90;
+	float belly_plump = exp(-(belly_d * belly_d)) * (1.0 - u.y * u.y) * 0.092;
+	float base_cushion = (1.0 - smoothstep(-0.94, -0.42, u.y)) * 0.032;
 	float ang_xy = atan(u.y, u.x);
 	float lower_weight = 0.35 + 0.65 * (1.0 - smoothstep(-0.15, 0.68, u.y));
 	float rest_lobes = (
@@ -182,18 +184,18 @@ void fragment() {
 
 	vec3 gel_col = mix(rich_core, mid_gel, smoothstep(0.06, 0.56, soft_fres));
 	gel_col = mix(gel_col, rim_gel, smoothstep(0.34, 0.90, fresnel));
-	gel_col *= mix(0.92, 1.07, wrap_diff);
+	gel_col *= mix(0.84, 1.02, wrap_diff);
 
 	// Warm bottom-right internal subsurface honey-gold caustic bounce
 	float caustic_dot = max(dot(N, L_caustic), 0.0);
 	float caustic = pow(caustic_dot, 2.5) * (1.0 - smoothstep(0.46, 0.92, fresnel));
 	vec3 caustic_col = mix(sig_caustic_color.rgb, glow_color.rgb, 0.30);
-	gel_col = mix(gel_col, caustic_col, caustic * 0.42);
+	gel_col = mix(gel_col, caustic_col, caustic * 0.28);
 
 	// Warm coral-apricot Fresnel rim sheen (keeps rich coral saturation, never chalky white!)
 	float rim_lit = fresnel * (0.24 + 0.48 * max(dot(N, L_rim), 0.0));
 	vec3 rim_sheen_col = mix(rich_edge, rich_core, 0.45);
-	gel_col = mix(gel_col, rim_sheen_col, clamp(rim_lit * 0.34, 0.0, 0.38));
+	gel_col = mix(gel_col, rim_sheen_col, clamp(rim_lit * 0.30, 0.0, 0.34));
 
 	// Vibrant jewel-like flavor tint wash inside Charlie's lower/mid belly when digesting prey
 	float belly_zone = (1.0 - smoothstep(0.12, 0.68, fresnel)) * (1.0 - smoothstep(0.12, 0.72, v_local_pos.y));
@@ -225,16 +227,16 @@ void fragment() {
 
 	// Glossy Wet Clearcoat Specular ON THE OUTER CROWN SHELL:
 	// 1. Subtle wet clearcoat sheen confined softly above midline and strongly attenuated over eyes
-	float wet_sheen = pow(NdotH_broad, 18.0) * 0.12 * smoothstep(0.18, 0.50, v_local_pos.y) * eye_spec_atten;
+	float wet_sheen = pow(NdotH_broad, 18.0) * 0.10 * smoothstep(0.18, 0.50, v_local_pos.y) * eye_spec_atten;
 	// 2. Sleek tight curved crown highlight arc high on upper-left dome (y > 0.36)
 	float crown_core = smoothstep(0.952, 0.980, NdotH_coat) * crown_front;
-	float crown_soft = smoothstep(0.905, 0.965, NdotH_coat) * 0.22 * crown_front;
-	float crown_ribbon = clamp(crown_core * 0.94 + crown_soft, 0.0, 1.0) * crown_zone * eye_spec_atten;
+	float crown_soft = smoothstep(0.905, 0.965, NdotH_coat) * 0.18 * crown_front;
+	float crown_ribbon = clamp(crown_core * 0.88 + crown_soft, 0.0, 1.0) * crown_zone * eye_spec_atten;
 	// 3. Cute crisp tiny round secondary glint beside the crown ribbon
-	float crown_pin = smoothstep(0.990, 0.9965, NdotH_pin) * 0.92 * crown_zone * eye_spec_atten;
+	float crown_pin = smoothstep(0.990, 0.9965, NdotH_pin) * 0.88 * crown_zone * eye_spec_atten;
 
 	vec3 spec_col = vec3(1.0, 0.992, 0.975);
-	gel_col = mix(gel_col, spec_col, clamp(crown_ribbon * 0.92 + crown_pin * 0.96 + wet_sheen * 0.45, 0.0, 0.95));
+	gel_col = mix(gel_col, spec_col, clamp(crown_ribbon * 0.80 + crown_pin * 0.86 + wet_sheen * 0.35, 0.0, 0.85));
 
 	// Semi-translucent honey belly (lets pearls, delicate bubbles & attenuated refracted world shine cleanly)
 	// with silky subpixel grazing edge AA feathering at the outermost rim!

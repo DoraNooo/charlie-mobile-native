@@ -127,10 +127,10 @@ void fragment() {
 	float lum = dot(albedo, vec3(0.299, 0.587, 0.114));
 	float core_peak = smoothstep(0.84, 0.99, lum) * smoothstep(0.32, 0.78, tex.a);
 	core_peak = core_peak * core_peak;
-	lit_rgb *= (1.0 + core_peak * 0.30);
+	lit_rgb *= (1.0 + core_peak * 0.10);
 
-	// Hue-preserving peak ceiling: keeps non-emissive frog backs, blimp hulls & car roofs saturated below bloom
-	float max_allowed = mix(1.08, 1.35, core_peak);
+	// Hue-preserving peak ceiling: keeps creatures rich and calm without blowing highlights to white
+	float max_allowed = mix(0.98, 1.05, core_peak);
 	float cur_peak = max(lit_rgb.r, max(lit_rgb.g, lit_rgb.b));
 	if (cur_peak > max_allowed) {
 		lit_rgb *= (max_allowed / cur_peak);

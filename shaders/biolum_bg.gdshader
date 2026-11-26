@@ -314,7 +314,7 @@ void fragment() {
 		float caustic_net = r1_2 * r1_2 * r1 * 0.72 + r2_2 * r2_2 * r2_2 * 0.52;
 		float top_fade = 1.0 - smoothstep(0.06, 0.90, uv.y);
 		float left_bias = 0.72 + 0.28 * (1.0 - smoothstep(0.0, 1.0, uv.x));
-		col += vec3(0.28, 0.98, 0.86) * caustic_net * (0.10 + 0.28 * top_fade) * left_bias * w1;
+		col += vec3(0.24, 0.88, 0.78) * caustic_net * (0.045 + 0.13 * top_fade) * left_bias * w1;
 
 		// Dual rotated organic bubble layers (zero grid alignment)
 		vec2 b_shift_a = vec2(cam_norm.x * 0.48, cam_norm.y * 0.48 + t * 0.095);
@@ -322,7 +322,7 @@ void fragment() {
 		vec3 bub_a = micro_bubble_layer(uv_asp, b_shift_a, ROT_C, 4.9, t, 31.7);
 		vec3 bub_b = micro_bubble_layer(uv_asp, b_shift_b, ROT_D, 3.2, t, 67.3);
 		vec3 bub = bub_a + bub_b * 0.85;
-		col += (vec3(0.56, 1.0, 0.92) * bub.x + vec3(0.95, 1.0, 0.98) * bub.y * 1.15) * w1;
+		col += (vec3(0.48, 0.92, 0.86) * bub.x * 0.58 + vec3(0.85, 0.96, 0.95) * bub.y * 0.65) * w1;
 	}
 
 	// Scale 2 (Sous-Bois): lush misty emerald clearing + organic pulsing HDR-tipped fireflies
