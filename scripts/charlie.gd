@@ -334,22 +334,23 @@ func _step_blink(dt: float) -> void:
 func _get_droplet_rest_offsets() -> Array[Vector2]:
 	var back: Vector2 = Vector2(-cos(facing_angle), -sin(facing_angle))
 	var perp: Vector2 = Vector2(-back.y, back.x)
-	var speed_trail: float = _stretch * 0.24
-	var bob0: float = sin(_time * 3.8) * 0.09
-	var bob1: float = cos(_time * 3.1 + 1.4) * 0.11
-	var bob2: float = sin(_time * 3.5 + 2.7) * 0.09
+	var speed_trail: float = _stretch * 0.34
+	var bob0: float = sin(_time * 1.65) * 0.085
+	var bob1: float = cos(_time * 1.35 + 1.4) * 0.105
+	var bob2: float = sin(_time * 1.50 + 2.7) * 0.085
 	return [
-		back * (0.78 + speed_trail + bob0) + perp * (-0.36 + bob1 * 0.65),
-		back * (1.02 + speed_trail * 1.25 + bob1) + perp * (bob0 * 0.60),
-		back * (0.78 + speed_trail + bob2) + perp * (0.36 - bob1 * 0.65),
+		back * (0.68 + speed_trail + bob0) + perp * (-0.34 + bob1 * 0.55),
+		back * (0.86 + speed_trail * 1.28 + bob1) + perp * (bob0 * 0.50),
+		back * (0.68 + speed_trail + bob2) + perp * (0.34 - bob1 * 0.55),
 	]
 
 
 func _step_droplets(dt: float) -> void:
 	var rest_offsets: Array[Vector2] = _get_droplet_rest_offsets()
 	var safe_size: float = maxf(world_size, 1.0)
-	var stiffness_values: Array[float] = [76.0, 56.0, 72.0]
-	var damping_values: Array[float] = [9.2, 7.6, 8.9]
+	# Heavy viscous oil-like inertia so droplets lag smoothly, stretch thick necks, and ooze-merge back in
+	var stiffness_values: Array[float] = [42.0, 32.0, 38.0]
+	var damping_values: Array[float] = [6.8, 5.8, 6.4]
 	var alive_clamped: int = clampi(droplets_alive, 0, MAX_DROPLETS)
 
 	# Detect regenerated droplets and trigger smooth heal-bloom (0.08 -> 1.0)
@@ -363,7 +364,7 @@ func _step_droplets(dt: float) -> void:
 	for i: int in range(MAX_DROPLETS):
 		if i < alive_clamped:
 			if _drop_scales[i] < 0.999:
-				_drop_scales[i] = lerpf(_drop_scales[i], 1.0, 1.0 - exp(-7.5 * dt))
+				_drop_scales[i] = lerpf(_drop_scales[i], 1.0, 1.0 - exp(-6.2 * dt))
 				if _drop_scales[i] > 0.995:
 					_drop_scales[i] = 1.0
 		else:
@@ -377,7 +378,7 @@ func _step_droplets(dt: float) -> void:
 
 		# Convert back to local shader space (-2.6..2.6) and clamp within metaball quad
 		var local_uv: Vector2 = (_drop_world_pos[i] - position) / safe_size
-		var max_dist: float = 1.78
+		var max_dist: float = 1.85
 		if local_uv.length() > max_dist:
 			local_uv = local_uv.normalized() * max_dist
 			_drop_world_pos[i] = position + local_uv * safe_size

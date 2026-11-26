@@ -5,7 +5,8 @@ extends Control
 ## power buttons simultaneously without interference.
 
 const DEADZONE: float = 0.08
-const IDLE_ALPHA: float = 0.58
+const IDLE_ALPHA: float = 0.08
+const ACTIVE_ALPHA: float = 0.78
 
 @export var max_radius: float = 72.0
 @export var knob_radius: float = 30.0
@@ -31,13 +32,14 @@ func _ready() -> void:
 
 
 func _build_knob_textures() -> void:
+	# Soft translucent pearlescent wax halo (no harsh fiery orange)
 	var glow_grad: Gradient = Gradient.new()
-	glow_grad.offsets = PackedFloat32Array([0.0, 0.42, 0.78, 1.0])
+	glow_grad.offsets = PackedFloat32Array([0.0, 0.45, 0.80, 1.0])
 	glow_grad.colors = PackedColorArray([
-		Color(1.0, 0.70, 0.40, 0.68),
-		Color(1.0, 0.50, 0.28, 0.34),
-		Color(0.98, 0.36, 0.26, 0.10),
-		Color(0.98, 0.34, 0.24, 0.0),
+		Color(0.95, 0.84, 0.76, 0.42),
+		Color(0.84, 0.60, 0.56, 0.20),
+		Color(0.68, 0.44, 0.50, 0.06),
+		Color(0.64, 0.40, 0.48, 0.0),
 	])
 	_knob_glow_tex = GradientTexture2D.new()
 	_knob_glow_tex.width = 64
@@ -47,26 +49,27 @@ func _build_knob_textures() -> void:
 	_knob_glow_tex.fill_to = Vector2(1.0, 0.5)
 	_knob_glow_tex.gradient = glow_grad
 
+	# Soft glossy liquid-wax sphere gradient
 	var body_grad: Gradient = Gradient.new()
-	body_grad.offsets = PackedFloat32Array([0.0, 0.32, 0.72, 0.94, 1.0])
+	body_grad.offsets = PackedFloat32Array([0.0, 0.28, 0.68, 0.93, 1.0])
 	body_grad.colors = PackedColorArray([
-		Color(1.0, 0.95, 0.80, 1.0),
-		Color(1.0, 0.74, 0.45, 0.98),
-		Color(0.96, 0.42, 0.34, 0.94),
-		Color(0.86, 0.28, 0.34, 0.86),
-		Color(0.86, 0.28, 0.34, 0.0),
+		Color(0.99, 0.95, 0.90, 0.92),
+		Color(0.92, 0.74, 0.66, 0.88),
+		Color(0.76, 0.46, 0.50, 0.84),
+		Color(0.54, 0.30, 0.42, 0.76),
+		Color(0.54, 0.30, 0.42, 0.0),
 	])
 	_knob_body_tex = GradientTexture2D.new()
 	_knob_body_tex.width = 64
 	_knob_body_tex.height = 64
 	_knob_body_tex.fill = GradientTexture2D.FILL_RADIAL
-	_knob_body_tex.fill_from = Vector2(0.38, 0.36)
+	_knob_body_tex.fill_from = Vector2(0.36, 0.34)
 	_knob_body_tex.fill_to = Vector2(0.92, 0.88)
 	_knob_body_tex.gradient = body_grad
 
 
 func _process(delta: float) -> void:
-	var target_alpha: float = 1.0 if is_active else IDLE_ALPHA
+	var target_alpha: float = ACTIVE_ALPHA if is_active else IDLE_ALPHA
 	var alpha_animating: bool = absf(_visual_alpha - target_alpha) > 0.005
 	if is_active:
 		_pulse_time += delta
@@ -150,28 +153,28 @@ func _draw() -> void:
 	draw_circle(center, max_radius, Color(0.04, 0.12, 0.20, 0.34 * a))
 
 	# Outer bioluminescent ring
-	var ring_col: Color = Color(0.55, 0.90, 0.92, 0.42 * a)
+	var ring_col: Color = Color(0.68, 0.88, 0.92, 0.36 * a)
 	if is_active:
-		ring_col = Color(1.0, 0.72, 0.48, 0.68 * a)
-	draw_arc(center, max_radius, 0.0, TAU, 48, ring_col, 2.2, true)
+		ring_col = Color(0.95, 0.82, 0.72, 0.56 * a)
+	draw_arc(center, max_radius, 0.0, TAU, 48, ring_col, 2.0, true)
 
 	# Subtle cardinal guide ticks
-	var tick_col: Color = Color(0.75, 0.95, 0.96, 0.24 * a)
+	var tick_col: Color = Color(0.80, 0.94, 0.96, 0.20 * a)
 	for i in range(4):
 		var ang: float = float(i) * PI * 0.5
 		var dir: Vector2 = Vector2(cos(ang), sin(ang))
-		draw_line(center + dir * (max_radius - 10.0), center + dir * (max_radius - 3.0), tick_col, 1.8, true)
+		draw_line(center + dir * (max_radius - 10.0), center + dir * (max_radius - 3.0), tick_col, 1.6, true)
 
-	# Soft radial-gradient glowing lava thumbstick knob
+	# Soft radial-gradient glossy liquid-wax thumbstick knob
 	var knob_pos: Vector2 = center + _knob_offset
-	var glow_pulse: float = 1.0 + (0.07 * sin(_pulse_time * 5.0) if is_active else 0.0)
-	var glow_r: float = knob_radius * 1.75 * glow_pulse
+	var glow_pulse: float = 1.0 + (0.05 * sin(_pulse_time * 4.2) if is_active else 0.0)
+	var glow_r: float = knob_radius * 1.62 * glow_pulse
 	if _knob_glow_tex != null:
 		draw_texture_rect(
 			_knob_glow_tex,
 			Rect2(knob_pos - Vector2(glow_r, glow_r), Vector2(glow_r * 2.0, glow_r * 2.0)),
 			false,
-			Color(1.0, 1.0, 1.0, a * (0.95 if is_active else 0.65))
+			Color(1.0, 1.0, 1.0, a * (0.85 if is_active else 0.50))
 		)
 	if _knob_body_tex != null:
 		var body_r: float = knob_radius * 1.04
@@ -182,5 +185,7 @@ func _draw() -> void:
 			Color(1.0, 1.0, 1.0, a)
 		)
 	else:
-		draw_circle(knob_pos, knob_radius, Color(0.96, 0.40, 0.34, 0.88 * a))
-	draw_arc(knob_pos, knob_radius, 0.0, TAU, 36, Color(1.0, 0.88, 0.70, 0.62 * a), 1.6, true)
+		draw_circle(knob_pos, knob_radius, Color(0.82, 0.56, 0.58, 0.82 * a))
+	# Delicate liquid-wax specular highlight & meniscus rim
+	draw_circle(knob_pos + Vector2(-knob_radius * 0.30, -knob_radius * 0.30), knob_radius * 0.24, Color(1.0, 0.98, 0.95, 0.44 * a))
+	draw_arc(knob_pos, knob_radius, 0.0, TAU, 36, Color(0.98, 0.90, 0.84, 0.48 * a), 1.4, true)

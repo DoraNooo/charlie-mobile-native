@@ -4,12 +4,14 @@ extends Node2D
 ## smooth fade-in, viewport culling, and despawning for ~28 balanced creatures around Charlie.
 
 const TARGET_COUNT: int = 28
+const MAX_POOL_SIZE: int = 40
 const EDIBLE_RATIO: float = 0.96
 const PREDATOR_RATIO: float = 1.06
 
 var difficulty: String = "chill"
 
 var _creatures: Array[Creature] = []
+var _pool: Array[Creature] = []
 var _current_scale_idx: int = 0
 var _step_result: Dictionary = {
 	"nearest_prey": null,
@@ -34,8 +36,7 @@ func reset_for_scale(charlie: Charlie, scale_idx: int) -> void:
 	_current_scale_idx = clampi(scale_idx, 0, Scales.NUM_SCALES - 1)
 	Creature.preload_scale(_current_scale_idx)
 	for c: Creature in _creatures:
-		if is_instance_valid(c):
-			c.queue_free()
+		_recycle_creature(c)
 	_creatures.clear()
 
 	if charlie == null:
@@ -115,7 +116,7 @@ func step_ecosystem(
 			continue
 
 		if not c.alive:
-			c.queue_free()
+			_recycle_creature(c)
 			_creatures.remove_at(idx)
 			idx -= 1
 			continue
@@ -125,7 +126,7 @@ func step_ecosystem(
 
 		# Despawn if drifted well outside the active viewport or hopelessly tiny/huge
 		if dist_sq > despawn_radius_sq or c.world_size < min_keep_size or c.world_size > max_keep_size:
-			c.queue_free()
+			_recycle_creature(c)
 			_creatures.remove_at(idx)
 			idx -= 1
 			continue
@@ -284,12 +285,40 @@ func _spawn_creature(charlie: Charlie, scale_idx: int, spawn_pos: Vector2, want_
 	else:
 		creature_size = clampf(creature_size, charlie.world_size * 1.14, charlie.world_size * 1.95)
 
-	var creature: Creature = Creature.new()
-	creature.setup(chosen, scale_idx, creature_size, spawn_pos)
+	var creature: Creature = null
+	while not _pool.is_empty():
+		var pooled: Creature = _pool.pop_back() as Creature
+		if is_instance_valid(pooled):
+			creature = pooled
+			break
+
+	var is_new: bool = creature == null
+	if is_new:
+		creature = Creature.new()
+
+	creature.is_edible = want_prey
+	creature.is_predator = not want_prey
+	creature.proximity_ratio = 0.0
 	creature.show_danger_halo = bool(_get_preset().get("show_danger_halo", true))
-	add_child(creature)
+	creature.setup(chosen, scale_idx, creature_size, spawn_pos)
+	creature.alive = true
+	creature.visible = true
+	if is_new:
+		add_child(creature)
 	_creatures.append(creature)
 	return creature
+
+
+func _recycle_creature(c: Creature) -> void:
+	if not is_instance_valid(c):
+		return
+	c.alive = false
+	c.visible = false
+	c.set_process(false)
+	if _pool.size() < MAX_POOL_SIZE:
+		_pool.append(c)
+	else:
+		c.queue_free()
 
 
 func _should_spawn_prey() -> bool:

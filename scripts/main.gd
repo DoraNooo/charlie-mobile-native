@@ -14,8 +14,8 @@ const MAX_COMBO: int = 6
 const PASSIVE_HEAL_SECONDS: float = 8.0
 const DIRECT_TOUCH_DEADZONE: float = 18.0
 const DIRECT_TOUCH_FULL_RADIUS: float = 110.0
-const MAX_TRAIL_DOTS: int = 18
-const TRAIL_SPAWN_INTERVAL: float = 0.045
+const MAX_TRAIL_DOTS: int = 8
+const TRAIL_SPAWN_INTERVAL: float = 0.095
 
 enum GameState {
 	TITLE,
@@ -74,6 +74,8 @@ var _glow_tex: GradientTexture2D = null
 
 # Core nodes
 var _bg_layer: CanvasLayer = null
+var _bg_viewport_container: SubViewportContainer = null
+var _bg_viewport: SubViewport = null
 var _bg_rect: ColorRect = null
 var _bg_mat: ShaderMaterial = null
 var _camera: Camera2D = null
@@ -83,7 +85,7 @@ var _vfx_layer: _WorldVfxLayer = null
 var _audio: AudioEngine = null
 var _cutscenes: CutscenePlayer = null
 
-# World VFX state (lava spit projectiles, shockwaves, chomp/heal bursts, molten embers, swim trail, scale warp veil)
+# World VFX state (lava spit projectiles, shockwaves, chomp/heal bursts, molten embers, liquid micro-beads, scale warp veil)
 var _projectiles: Array[Dictionary] = []
 var _shockwaves: Array[Dictionary] = []
 var _bursts: Array[Dictionary] = []
@@ -96,31 +98,19 @@ var _warp_origin: Vector2 = Vector2.ZERO
 var _warp_color: Color = Color(0.56, 0.94, 0.98, 1.0)
 var _vfx_was_active: bool = false
 
-# HUD nodes
+# Minimal contemplative HUD nodes
 var _hud_layer: CanvasLayer = null
 var _danger_vignette: _DangerVignette = null
 var _hud_root: Control = null
 var _touch_target_overlay: _TouchTargetOverlay = null
 var _top_margin: MarginContainer = null
-var _scale_label: Label = null
-var _size_label: Label = null
-var _lives_label: Label = null
-var _progress_fill: TextureRect = null
-var _progress_count_label: Label = null
 var _mute_btn: _IconButton = null
 var _pause_btn: _IconButton = null
 var _joystick: VirtualJoystick = null
 var _spit_btn: _TouchPowerButton = null
 var _dash_btn: _TouchPowerButton = null
 
-# Dirty-flagged HUD cache (zero redundant string/theme mutations or redraws)
-var _hud_last_scale: int = -1
-var _hud_last_size_str: String = ""
-var _hud_last_droplets: int = -99
-var _hud_last_diff_mode: String = ""
-var _hud_last_crit_alpha_step: int = -1
-var _hud_last_progress: float = -1.0
-var _hud_last_progress_str: String = ""
+# Dirty-flagged HUD cache for power buttons (zero redundant redraws)
 var _hud_last_spit_cd: float = -1.0
 var _hud_last_dash_cd: float = -1.0
 var _hud_last_power_lvl: int = -1
@@ -264,24 +254,6 @@ class _TouchTargetOverlay:
 		draw_circle(target_pos, 3.4, Color(1.0, 0.96, 0.86, 0.88 * a))
 
 
-class _ScaleTicksOverlay:
-	extends Control
-	## Draws 5 subtle scale tick marks across the sleek 8px pill progress bar.
-	func _ready() -> void:
-		mouse_filter = Control.MOUSE_FILTER_IGNORE
-		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-
-	func _draw() -> void:
-		var w: float = size.x
-		var h: float = size.y
-		if w <= 8.0 or h <= 1.0:
-			return
-		var tick_col: Color = Color(1.0, 1.0, 1.0, 0.34)
-		for i: int in range(1, 6):
-			var x: float = w * (float(i) / 6.0)
-			draw_line(Vector2(x, 1.0), Vector2(x, h - 1.0), tick_col, 1.0, false)
-
-
 class _IconButton:
 	extends Button
 	## Circular HUD button that renders crisp anti-aliased vector icons instead of
@@ -342,23 +314,21 @@ class _IconButton:
 
 class _TouchPowerButton:
 	extends Control
-	## Multi-touch circular power button with anti-aliased vector icons,
-	## translucent cooldown sweep sector, and floating Nv.X pill badge.
+	## Discreet multi-touch circular power button with clean vector icons,
+	## translucent cooldown sweep, and subtle golden/violet evolution border tint.
 	signal activated
 
 	var icon_kind: String = "flame" # "flame" | "shockwave"
-	var hotkey_text: String = "F"
-	var level_text: String = "Nv.1"
+	var power_level: int = 1 # 1 = base, 2 = warm gold border tint, 3 = luminous violet border tint
 	var accent_color: Color = Color(1.0, 0.55, 0.30, 1.0)
 	var cooldown_ratio: float = 0.0 # 0.0 = ready, 1.0 = full cooldown
 	var glow_tex: Texture2D = null
-	var badge_font: Font = null
 
 	var _pressed_index: int = -1
 
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
-		custom_minimum_size = Vector2(94.0, 94.0)
+		custom_minimum_size = Vector2(90.0, 90.0)
 		size = custom_minimum_size
 
 	func reset_touch() -> void:
@@ -383,33 +353,44 @@ class _TouchPowerButton:
 					_pressed_index = -1
 					queue_redraw()
 
+	func _get_border_tint() -> Color:
+		if power_level >= 3:
+			# Subtle luminous violet evolution tint for Nv.3
+			return accent_color.lerp(Color(0.80, 0.56, 1.0, 1.0), 0.72)
+		if power_level == 2:
+			# Subtle warm golden evolution tint for Nv.2
+			return accent_color.lerp(Color(1.0, 0.84, 0.44, 1.0), 0.68)
+		return accent_color
+
 	func _draw() -> void:
 		var center: Vector2 = size * 0.5
 		var r: float = minf(size.x, size.y) * 0.43
 		var is_ready: bool = cooldown_ratio <= 0.001
 		var is_down: bool = _pressed_index != -1
+		var base_alpha: float = 0.96 if is_down else (0.68 if is_ready else 0.46)
+		var border_tint: Color = _get_border_tint()
 
 		# Soft radial halo when ready
 		if is_ready:
-			var halo_r: float = r * (1.58 if is_down else 1.44)
+			var halo_r: float = r * (1.50 if is_down else 1.36)
 			if glow_tex != null:
 				draw_texture_rect(
 					glow_tex,
 					Rect2(center - Vector2(halo_r, halo_r), Vector2(halo_r * 2.0, halo_r * 2.0)),
 					false,
-					Color(accent_color.r, accent_color.g, accent_color.b, 0.42 if is_down else 0.28)
+					Color(border_tint.r, border_tint.g, border_tint.b, (0.36 if is_down else 0.22) * base_alpha)
 				)
 			else:
-				draw_circle(center, r * (1.16 if is_down else 1.10), Color(accent_color.r, accent_color.g, accent_color.b, 0.22))
+				draw_circle(center, r * (1.14 if is_down else 1.08), Color(border_tint.r, border_tint.g, border_tint.b, 0.18 * base_alpha))
 
-		# Glassmorphic button fill
-		var fill_col: Color = Color(0.04, 0.10, 0.17, 0.78)
+		# Translucent glassmorphic button fill
+		var fill_col: Color = Color(0.04, 0.10, 0.17, 0.62 * base_alpha)
 		if is_down:
-			fill_col = Color(accent_color.r * 0.36, accent_color.g * 0.28, accent_color.b * 0.26, 0.90)
+			fill_col = Color(border_tint.r * 0.34, border_tint.g * 0.26, border_tint.b * 0.28, 0.84)
 		draw_circle(center, r, fill_col)
 
 		# Subtle inner top highlight
-		draw_arc(center, r - 1.5, -PI * 0.85, -PI * 0.15, 20, Color(1.0, 1.0, 1.0, 0.16), 1.5, true)
+		draw_arc(center, r - 1.5, -PI * 0.85, -PI * 0.15, 20, Color(1.0, 1.0, 1.0, 0.18 * base_alpha), 1.4, true)
 
 		# Translucent cooldown sweep sector (pie wedge covering remaining cooldown)
 		if not is_ready:
@@ -422,41 +403,25 @@ class _TouchPowerButton:
 			for i: int in range(segs + 1):
 				var ang: float = lerpf(start_a, end_a, float(i) / float(segs))
 				wedge.append(center + Vector2(cos(ang), sin(ang)) * (r - 1.5))
-			draw_colored_polygon(wedge, Color(0.01, 0.04, 0.08, 0.56))
+			draw_colored_polygon(wedge, Color(0.01, 0.04, 0.08, 0.48))
 
-		# Crisp vector icon (Flame or Concentric Shockwave / Bolt)
-		var icon_alpha: float = 1.0 if is_ready else 0.45
-		var icon_center: Vector2 = center + Vector2(0.0, -3.0)
+		# Clean centered vector icon (Flame or Concentric Shockwave / Bolt)
+		var icon_alpha: float = base_alpha if is_ready else 0.42
 		if icon_kind == "flame":
-			_draw_flame_icon(icon_center, r * 0.54, icon_alpha)
+			_draw_flame_icon(center, r * 0.54, icon_alpha)
 		else:
-			_draw_shockwave_icon(icon_center, r * 0.54, icon_alpha)
+			_draw_shockwave_icon(center, r * 0.54, icon_alpha)
 
-		# Outer ring + cooldown progress arc
-		var ring_col: Color = Color(accent_color.r, accent_color.g, accent_color.b, 0.92) if is_ready else Color(0.60, 0.74, 0.82, 0.34)
-		draw_arc(center, r, 0.0, TAU, 44, ring_col, 2.6 if is_ready else 1.8, true)
+		# Outer ring + subtle evolution tint + cooldown progress arc
+		var ring_col: Color = Color(border_tint.r, border_tint.g, border_tint.b, 0.86 * base_alpha) if is_ready else Color(0.60, 0.74, 0.82, 0.32)
+		var ring_w: float = (2.6 if power_level >= 2 else 2.0) if is_ready else 1.6
+		draw_arc(center, r, 0.0, TAU, 44, ring_col, ring_w, true)
+		if power_level >= 2 and is_ready:
+			# Subtle second inner shimmer ring for evolved powers (Nv.2 gold / Nv.3 violet)
+			draw_arc(center, r - 3.2, 0.0, TAU, 40, Color(border_tint.r, border_tint.g, border_tint.b, 0.36 * base_alpha), 1.2, true)
 		if not is_ready:
 			var ready_frac: float = clampf(1.0 - cooldown_ratio, 0.0, 1.0)
-			draw_arc(center, r - 2.0, -PI * 0.5, -PI * 0.5 + TAU * ready_frac, 36, accent_color, 3.2, true)
-
-		# Floating Nv.X pill badge at bottom edge
-		var font: Font = badge_font if badge_font != null else ThemeDB.fallback_font
-		if font != null:
-			var badge_str: String = level_text if OS.has_feature("mobile") or hotkey_text.is_empty() else "%s · %s" % [level_text, hotkey_text]
-			var txt_size: Vector2 = font.get_string_size(badge_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 10)
-			var pad_x: float = 8.0
-			var pill_w: float = txt_size.x + pad_x * 2.0
-			var pill_h: float = 17.0
-			var pill_pos: Vector2 = Vector2(center.x - pill_w * 0.5, center.y + r - pill_h * 0.62)
-			var pill_rect: Rect2 = Rect2(pill_pos, Vector2(pill_w, pill_h))
-			var pill_bg: StyleBoxFlat = StyleBoxFlat.new()
-			pill_bg.bg_color = Color(0.03, 0.08, 0.14, 0.92)
-			pill_bg.border_color = Color(accent_color.r, accent_color.g, accent_color.b, 0.78 if is_ready else 0.35)
-			pill_bg.set_border_width_all(1)
-			pill_bg.set_corner_radius_all(9)
-			draw_style_box(pill_bg, pill_rect)
-			var text_pos: Vector2 = Vector2(center.x - txt_size.x * 0.5, pill_pos.y + pill_h - 4.5)
-			draw_string(font, text_pos, badge_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.98, 0.96, 0.92, 0.96 if is_ready else 0.55))
+			draw_arc(center, r - 2.0, -PI * 0.5, -PI * 0.5 + TAU * ready_frac, 36, Color(border_tint.r, border_tint.g, border_tint.b, 0.82), 2.8, true)
 
 	func _draw_flame_icon(c: Vector2, s: float, alpha: float) -> void:
 		var outer_col: Color = Color(1.0, 0.48, 0.26, alpha)
@@ -632,7 +597,7 @@ func _update_safe_area() -> void:
 		_top_margin.add_theme_constant_override("margin_left", int(round(20.0 + left)))
 		_top_margin.add_theme_constant_override("margin_right", int(round(20.0 + right)))
 		_top_margin.add_theme_constant_override("margin_top", int(round(16.0 + top)))
-		_top_margin.offset_bottom = 96.0 + top
+		_top_margin.offset_bottom = 84.0 + top
 
 	if _joystick != null:
 		_joystick.offset_left = 26.0 + left
@@ -641,20 +606,20 @@ func _update_safe_area() -> void:
 		_joystick.offset_bottom = -28.0 - bottom
 
 	if _spit_btn != null:
-		_spit_btn.offset_left = -224.0 - right
+		_spit_btn.offset_left = -220.0 - right
 		_spit_btn.offset_right = -130.0 - right
-		_spit_btn.offset_top = -126.0 - bottom
-		_spit_btn.offset_bottom = -32.0 - bottom
+		_spit_btn.offset_top = -124.0 - bottom
+		_spit_btn.offset_bottom = -34.0 - bottom
 
 	if _dash_btn != null:
-		_dash_btn.offset_left = -118.0 - right
+		_dash_btn.offset_left = -114.0 - right
 		_dash_btn.offset_right = -24.0 - right
-		_dash_btn.offset_top = -148.0 - bottom
-		_dash_btn.offset_bottom = -54.0 - bottom
+		_dash_btn.offset_top = -146.0 - bottom
+		_dash_btn.offset_bottom = -56.0 - bottom
 
 	if _banner_panel != null:
-		_banner_panel.offset_top = 104.0 + top
-		_banner_panel.offset_bottom = 174.0 + top
+		_banner_panel.offset_top = 76.0 + top
+		_banner_panel.offset_bottom = 148.0 + top
 
 	if _options_scroll != null:
 		var vp_h: float = get_viewport().get_visible_rect().size.y
@@ -697,6 +662,25 @@ func _setup_background() -> void:
 	_bg_layer.layer = -10
 	add_child(_bg_layer)
 
+	# Half-resolution (0.5x) SubViewport cuts background fragment shading by 4x on mobile
+	# while bilinear upscaling makes the bioluminescent ambient backdrop silkier and dreamier.
+	_bg_viewport_container = SubViewportContainer.new()
+	_bg_viewport_container.name = "BgViewportContainer"
+	_bg_viewport_container.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_bg_viewport_container.stretch = true
+	_bg_viewport_container.stretch_shrink = 2
+	_bg_viewport_container.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_bg_viewport_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_bg_layer.add_child(_bg_viewport_container)
+
+	_bg_viewport = SubViewport.new()
+	_bg_viewport.name = "BgSubViewport"
+	_bg_viewport.disable_3d = true
+	_bg_viewport.handle_input_locally = false
+	_bg_viewport.transparent_bg = false
+	_bg_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_bg_viewport_container.add_child(_bg_viewport)
+
 	_bg_rect = ColorRect.new()
 	_bg_rect.name = "BiolumBg"
 	_bg_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -706,7 +690,7 @@ func _setup_background() -> void:
 	if bg_shader != null:
 		_bg_mat.shader = bg_shader
 	_bg_rect.material = _bg_mat
-	_bg_layer.add_child(_bg_rect)
+	_bg_viewport.add_child(_bg_rect)
 
 
 func _setup_world() -> void:
@@ -742,13 +726,6 @@ func _setup_audio_and_cutscenes() -> void:
 	add_child(_cutscenes)
 
 
-func _apply_hud_text_shadow(lbl: Label) -> void:
-	lbl.add_theme_color_override("font_shadow_color", Color(0.0, 0.03, 0.07, 0.85))
-	lbl.add_theme_constant_override("shadow_offset_x", 0)
-	lbl.add_theme_constant_override("shadow_offset_y", 2)
-	lbl.add_theme_constant_override("shadow_outline_size", 4)
-
-
 func _setup_hud() -> void:
 	_hud_layer = CanvasLayer.new()
 	_hud_layer.name = "HudLayer"
@@ -773,13 +750,13 @@ func _setup_hud() -> void:
 	_touch_target_overlay.glow_tex = _glow_tex
 	_hud_root.add_child(_touch_target_overlay)
 
-	# Top bar container
+	# Ultra-minimal top-right container: discreet Mute & Pause circular buttons only
 	_top_margin = MarginContainer.new()
 	_top_margin.anchor_left = 0.0
 	_top_margin.anchor_top = 0.0
 	_top_margin.anchor_right = 1.0
 	_top_margin.anchor_bottom = 0.0
-	_top_margin.offset_bottom = 96.0
+	_top_margin.offset_bottom = 84.0
 	_top_margin.add_theme_constant_override("margin_left", 20)
 	_top_margin.add_theme_constant_override("margin_right", 20)
 	_top_margin.add_theme_constant_override("margin_top", 16)
@@ -787,121 +764,20 @@ func _setup_hud() -> void:
 	_hud_root.add_child(_top_margin)
 
 	var top_row: HBoxContainer = HBoxContainer.new()
-	top_row.add_theme_constant_override("separation", 20)
-	top_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	top_row.add_theme_constant_override("separation", 10)
+	top_row.alignment = BoxContainer.ALIGNMENT_END
 	top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_top_margin.add_child(top_row)
 
-	# Left floating info (no heavy opaque box — sleek floating typography + glowing droplets)
-	var left_col: VBoxContainer = VBoxContainer.new()
-	left_col.add_theme_constant_override("separation", 2)
-	left_col.alignment = BoxContainer.ALIGNMENT_CENTER
-	left_col.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	top_row.add_child(left_col)
-
-	_scale_label = Label.new()
-	_scale_label.text = "I · Quantique"
-	if _font_display != null:
-		_scale_label.add_theme_font_override("font", _font_display)
-	_scale_label.add_theme_font_size_override("font_size", 18)
-	_scale_label.add_theme_color_override("font_color", Color(1.0, 0.88, 0.66, 1.0))
-	_apply_hud_text_shadow(_scale_label)
-	left_col.add_child(_scale_label)
-
-	var sub_row: HBoxContainer = HBoxContainer.new()
-	sub_row.add_theme_constant_override("separation", 10)
-	sub_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	left_col.add_child(sub_row)
-
-	_size_label = Label.new()
-	_size_label.text = "0.1 nm"
-	if _font_ui_bold != null:
-		_size_label.add_theme_font_override("font", _font_ui_bold)
-	_size_label.add_theme_font_size_override("font_size", 13)
-	_size_label.add_theme_color_override("font_color", Color(0.76, 0.95, 0.98, 0.94))
-	_apply_hud_text_shadow(_size_label)
-	sub_row.add_child(_size_label)
-
-	_lives_label = Label.new()
-	_lives_label.text = "●●●"
-	_lives_label.add_theme_font_size_override("font_size", 13)
-	_lives_label.add_theme_color_override("font_color", Color(1.0, 0.56, 0.44, 1.0))
-	_apply_hud_text_shadow(_lives_label)
-	sub_row.add_child(_lives_label)
-
-	# Center sleek 8px pill progress bar with teal -> gold -> coral gradient & 5 scale ticks
-	var center_col: VBoxContainer = VBoxContainer.new()
-	center_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	center_col.alignment = BoxContainer.ALIGNMENT_CENTER
-	center_col.add_theme_constant_override("separation", 5)
-	center_col.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	top_row.add_child(center_col)
-
-	var bar_track: Panel = Panel.new()
-	bar_track.custom_minimum_size = Vector2(180.0, 8.0)
-	bar_track.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bar_track.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar_track.clip_children = CanvasItem.CLIP_CHILDREN_AND_DRAW
-	var track_style: StyleBoxFlat = StyleBoxFlat.new()
-	track_style.bg_color = Color(0.03, 0.09, 0.15, 0.64)
-	track_style.border_color = Color(1.0, 1.0, 1.0, 0.14)
-	track_style.set_border_width_all(1)
-	track_style.set_corner_radius_all(4)
-	bar_track.add_theme_stylebox_override("panel", track_style)
-	center_col.add_child(bar_track)
-
-	var bar_grad: Gradient = Gradient.new()
-	bar_grad.offsets = PackedFloat32Array([0.0, 0.52, 1.0])
-	bar_grad.colors = PackedColorArray([
-		Color("#4fd1c5"), # Luminous teal
-		Color("#ffd166"), # Warm storybook gold
-		Color("#ff6f61"), # Molten coral
-	])
-	var bar_tex: GradientTexture2D = GradientTexture2D.new()
-	bar_tex.width = 256
-	bar_tex.height = 8
-	bar_tex.fill = GradientTexture2D.FILL_LINEAR
-	bar_tex.fill_from = Vector2(0.0, 0.5)
-	bar_tex.fill_to = Vector2(1.0, 0.5)
-	bar_tex.gradient = bar_grad
-
-	_progress_fill = TextureRect.new()
-	_progress_fill.texture = bar_tex
-	_progress_fill.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_progress_fill.stretch_mode = TextureRect.STRETCH_SCALE
-	_progress_fill.anchor_left = 0.0
-	_progress_fill.anchor_top = 0.0
-	_progress_fill.anchor_right = 0.0
-	_progress_fill.anchor_bottom = 1.0
-	_progress_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar_track.add_child(_progress_fill)
-
-	var ticks_overlay: _ScaleTicksOverlay = _ScaleTicksOverlay.new()
-	bar_track.add_child(ticks_overlay)
-
-	_progress_count_label = Label.new()
-	_progress_count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_progress_count_label.text = "0 / 15"
-	if _font_ui_bold != null:
-		_progress_count_label.add_theme_font_override("font", _font_ui_bold)
-	_progress_count_label.add_theme_font_size_override("font_size", 12)
-	_progress_count_label.add_theme_color_override("font_color", Color(0.88, 0.95, 0.99, 0.90))
-	_apply_hud_text_shadow(_progress_count_label)
-	center_col.add_child(_progress_count_label)
-
-	# Right action buttons (Audio & Pause with crisp vector icons)
-	var right_row: HBoxContainer = HBoxContainer.new()
-	right_row.add_theme_constant_override("separation", 10)
-	right_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	top_row.add_child(right_row)
-
 	_mute_btn = _make_hud_icon_button("sound_off" if audio_muted else "sound_on")
+	_mute_btn.modulate.a = 0.58
 	_mute_btn.pressed.connect(_on_toggle_mute)
-	right_row.add_child(_mute_btn)
+	top_row.add_child(_mute_btn)
 
 	_pause_btn = _make_hud_icon_button("pause")
+	_pause_btn.modulate.a = 0.58
 	_pause_btn.pressed.connect(_on_pause_pressed)
-	right_row.add_child(_pause_btn)
+	top_row.add_child(_pause_btn)
 
 	# Floating poetic scale / power evolution banner
 	_banner_panel = PanelContainer.new()
@@ -912,8 +788,8 @@ func _setup_hud() -> void:
 	_banner_panel.anchor_bottom = 0.0
 	_banner_panel.offset_left = -230.0
 	_banner_panel.offset_right = 230.0
-	_banner_panel.offset_top = 104.0
-	_banner_panel.offset_bottom = 176.0
+	_banner_panel.offset_top = 76.0
+	_banner_panel.offset_bottom = 148.0
 	_banner_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var banner_style: StyleBoxFlat = _make_glass_box(20)
 	banner_style.content_margin_top = 10.0
@@ -946,7 +822,7 @@ func _setup_hud() -> void:
 	_banner_sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	banner_col.add_child(_banner_sub)
 
-	# Bottom-left VirtualJoystick
+	# Bottom-left VirtualJoystick (ultra-discreet at rest, fades smoothly on touch)
 	_joystick = VirtualJoystick.new()
 	_joystick.name = "VirtualJoystick"
 	_joystick.anchor_left = 0.0
@@ -959,40 +835,36 @@ func _setup_hud() -> void:
 	_joystick.offset_bottom = -28.0
 	_hud_root.add_child(_joystick)
 
-	# Bottom-right multi-touch power buttons (Flame / F & Shockwave / E)
+	# Bottom-right discreet multi-touch power buttons (clean vector icons, no text badges)
 	_spit_btn = _TouchPowerButton.new()
 	_spit_btn.name = "SpitButton"
 	_spit_btn.icon_kind = "flame"
-	_spit_btn.hotkey_text = "F"
 	_spit_btn.accent_color = Color(1.0, 0.54, 0.30, 1.0)
 	_spit_btn.glow_tex = _glow_tex
-	_spit_btn.badge_font = _font_ui_bold
 	_spit_btn.anchor_left = 1.0
 	_spit_btn.anchor_top = 1.0
 	_spit_btn.anchor_right = 1.0
 	_spit_btn.anchor_bottom = 1.0
-	_spit_btn.offset_left = -224.0
-	_spit_btn.offset_top = -126.0
+	_spit_btn.offset_left = -220.0
+	_spit_btn.offset_top = -124.0
 	_spit_btn.offset_right = -130.0
-	_spit_btn.offset_bottom = -32.0
+	_spit_btn.offset_bottom = -34.0
 	_spit_btn.activated.connect(_trigger_lava_spit)
 	_hud_root.add_child(_spit_btn)
 
 	_dash_btn = _TouchPowerButton.new()
 	_dash_btn.name = "DashButton"
 	_dash_btn.icon_kind = "shockwave"
-	_dash_btn.hotkey_text = "E"
 	_dash_btn.accent_color = Color(0.42, 0.92, 0.96, 1.0)
 	_dash_btn.glow_tex = _glow_tex
-	_dash_btn.badge_font = _font_ui_bold
 	_dash_btn.anchor_left = 1.0
 	_dash_btn.anchor_top = 1.0
 	_dash_btn.anchor_right = 1.0
 	_dash_btn.anchor_bottom = 1.0
-	_dash_btn.offset_left = -118.0
-	_dash_btn.offset_top = -148.0
+	_dash_btn.offset_left = -114.0
+	_dash_btn.offset_top = -146.0
 	_dash_btn.offset_right = -24.0
-	_dash_btn.offset_bottom = -54.0
+	_dash_btn.offset_bottom = -56.0
 	_dash_btn.activated.connect(_trigger_shockwave_dash)
 	_hud_root.add_child(_dash_btn)
 
@@ -1655,13 +1527,6 @@ func _show_overlay(panel: Control) -> void:
 
 
 func _invalidate_hud_cache() -> void:
-	_hud_last_scale = -1
-	_hud_last_size_str = ""
-	_hud_last_droplets = -99
-	_hud_last_diff_mode = ""
-	_hud_last_crit_alpha_step = -1
-	_hud_last_progress = -1.0
-	_hud_last_progress_str = ""
 	_hud_last_spit_cd = -1.0
 	_hud_last_dash_cd = -1.0
 	_hud_last_power_lvl = -1
@@ -2063,34 +1928,35 @@ func _process(delta: float) -> void:
 	_update_background_shader(palette, progress)
 
 
-func _step_swim_trail(dt: float) -> void:
-	# Emit soft fading warm coral-gold glow dots when Charlie is swimming briskly or dashing
+func _step_swim_trail(dt: float, palette: Dictionary) -> void:
+	# Emit subtle, sparse, translucent glossy liquid-oil micro-beads only when swimming fast or dashing
 	var speed_ratio: float = _charlie.velocity.length() / maxf(_charlie.world_size, 1.0)
 	_trail_spawn_cd -= dt
-	if _trail_spawn_cd <= 0.0 and speed_ratio > 1.5:
-		var is_fast: bool = speed_ratio > 6.2
-		_trail_spawn_cd = 0.032 if is_fast else TRAIL_SPAWN_INTERVAL
+	if _trail_spawn_cd <= 0.0 and speed_ratio > 3.2:
+		var is_dashing: bool = speed_ratio > 6.0
+		_trail_spawn_cd = 0.055 if is_dashing else TRAIL_SPAWN_INTERVAL
 		if _trail_dots.size() >= MAX_TRAIL_DOTS:
 			_trail_dots.pop_front()
 		var back_dir: Vector2 = -_charlie.velocity.normalized()
-		var perp: Vector2 = Vector2(-back_dir.y, back_dir.x) * randf_range(-0.24, 0.24) * _charlie.world_size
-		var spawn_pos: Vector2 = _charlie.position + back_dir * (_charlie.world_size * 0.62) + perp
-		var life: float = randf_range(0.32, 0.48) if not is_fast else randf_range(0.38, 0.56)
-		var dot_r: float = _charlie.world_size * (randf_range(0.28, 0.44) if is_fast else randf_range(0.20, 0.34))
+		var perp: Vector2 = Vector2(-back_dir.y, back_dir.x) * randf_range(-0.22, 0.22) * _charlie.world_size
+		var spawn_pos: Vector2 = _charlie.position + back_dir * (_charlie.world_size * 0.68) + perp
+		var life: float = randf_range(0.36, 0.56) if not is_dashing else randf_range(0.42, 0.64)
+		var dot_r: float = _charlie.world_size * (randf_range(0.16, 0.26) if is_dashing else randf_range(0.12, 0.20))
+		var wax_col: Color = palette.get("blob_edge", Color(0.88, 0.48, 0.42, 1.0)) as Color
 		_trail_dots.append({
 			"pos": spawn_pos,
-			"vel": back_dir * (_charlie.world_size * randf_range(0.25, 0.65)),
+			"vel": back_dir * (_charlie.world_size * randf_range(0.18, 0.45)),
 			"radius": dot_r,
 			"life": life,
 			"max_life": life,
-			"color": Color(1.0, randf_range(0.58, 0.86), randf_range(0.28, 0.48), 1.0),
+			"color": wax_col,
 		})
 
 	var t_idx: int = _trail_dots.size() - 1
 	while t_idx >= 0:
 		var td: Dictionary = _trail_dots[t_idx]
 		td["life"] = float(td["life"]) - dt
-		var td_vel: Vector2 = (td["vel"] as Vector2) * exp(-dt * 3.5)
+		var td_vel: Vector2 = (td["vel"] as Vector2) * exp(-dt * 3.8)
 		td["vel"] = td_vel
 		td["pos"] = (td["pos"] as Vector2) + td_vel * dt
 		if float(td["life"]) <= 0.0:
@@ -2110,7 +1976,7 @@ func _step_title_swim(dt: float, palette: Dictionary) -> void:
 	var move_dir: Vector2 = to_target.normalized() * clampf(to_target.length() / maxf(_charlie.world_size * 2.2, 1.0), 0.25, 0.72)
 
 	_charlie.step_motion(dt, move_dir, true, null, null, palette)
-	_step_swim_trail(dt)
+	_step_swim_trail(dt, palette)
 	if not _trail_dots.is_empty() or _vfx_was_active:
 		_vfx_layer.queue_redraw()
 		_vfx_was_active = not _trail_dots.is_empty()
@@ -2156,7 +2022,7 @@ func _step_playing(dt: float, palette: Dictionary) -> void:
 	var predator_chasing: bool = bool(eco_info.get("predator_chasing", false))
 
 	_charlie.step_motion(dt, move_dir, has_input, nearest_prey, nearest_pred, palette)
-	_step_swim_trail(dt)
+	_step_swim_trail(dt, palette)
 	_step_projectiles_and_vfx(dt, creatures)
 	_resolve_creature_collisions(creatures)
 	if state != GameState.PLAYING:
@@ -2558,87 +2424,27 @@ func _update_background_shader(palette: Dictionary, progress: float) -> void:
 
 
 func _update_hud() -> void:
-	if _scale_label == null:
+	if _spit_btn == null or _dash_btn == null:
 		return
 
-	# Scale label (only mutate on scale change)
-	if current_scale_index != _hud_last_scale:
-		_hud_last_scale = current_scale_index
-		var sc: Dictionary = Scales.SCALES[current_scale_index] as Dictionary
-		_scale_label.text = "%s · %s" % [String(sc["roman"]), String(sc["name"])]
-
-	# Scientific size label (only mutate when formatted string changes)
-	var prog: float = Scales.size_to_progress(_charlie.world_size)
-	var size_str: String = Scales.format_scientific_size(prog)
-	if size_str != _hud_last_size_str:
-		_hud_last_size_str = size_str
-		_size_label.text = size_str
-
-	# Droplets / lives indicator (dirty-flagged by droplets + difficulty mode)
-	var droplets: int = _charlie.droplets_alive
-	var lives_dirty: bool = (droplets != _hud_last_droplets or difficulty_mode != _hud_last_diff_mode)
-	if difficulty_mode == "toddler":
-		if lives_dirty:
-			_lives_label.text = "Tout-petit · ∞"
-			_lives_label.add_theme_color_override("font_color", Color(0.68, 0.95, 0.82, 1.0))
-			_hud_last_crit_alpha_step = -1
-	elif droplets <= 0:
-		if lives_dirty:
-			_lives_label.text = "○○○ · CRITIQUE"
-		var blink_red: float = 0.55 + 0.45 * sin(_vfx_time * 9.0)
-		var alpha_step: int = roundi(blink_red * 20.0)
-		if lives_dirty or alpha_step != _hud_last_crit_alpha_step:
-			_hud_last_crit_alpha_step = alpha_step
-			_lives_label.add_theme_color_override("font_color", Color(1.0, 0.24, 0.28, blink_red))
-	else:
-		if lives_dirty:
-			var dots: String = ""
-			for i: int in range(Charlie.MAX_DROPLETS):
-				dots += "●" if i < droplets else "○"
-			_lives_label.text = dots
-			_lives_label.add_theme_color_override("font_color", Color(1.0, 0.56, 0.44, 1.0))
-			_hud_last_crit_alpha_step = -1
-	if lives_dirty:
-		_hud_last_droplets = droplets
-		_hud_last_diff_mode = difficulty_mode
-
-	# Sleek 8px pill progress bar & counter (only mutate on actual change)
-	var combo_suffix: String = "  ·  ×%d" % _combo_count if _combo_count >= 2 else ""
-	var progress_frac: float = 1.0
-	var count_str: String = ""
-	if _free_roam_after_victory:
-		progress_frac = 1.0
-		count_str = "Cosmos infini · %d bouchées%s" % [total_eaten, combo_suffix]
-	else:
-		progress_frac = clampf(float(bites_in_scale) / float(maxi(1, bites_per_scale)), 0.0, 1.0)
-		count_str = "%d / %d%s" % [bites_in_scale, bites_per_scale, combo_suffix]
-
-	if _progress_fill != null and absf(progress_frac - _hud_last_progress) > 0.002:
-		_hud_last_progress = progress_frac
-		_progress_fill.anchor_right = progress_frac
-	if count_str != _hud_last_progress_str:
-		_hud_last_progress_str = count_str
-		_progress_count_label.text = count_str
-
-	# Power buttons (only redraw when cooldown ratio or power level changes)
+	# Power buttons (only redraw when cooldown ratio or power evolution level changes)
 	var preset: Dictionary = Scales.DIFFICULTY_PRESETS[difficulty_mode] as Dictionary
 	var spit_max: float = maxf(0.1, float(preset.get("spit_cd", 2.4)))
 	var dash_max: float = maxf(0.1, _get_dash_cooldown())
 	var power_lvl: int = _get_power_level()
 	var lvl_changed: bool = (power_lvl != _hud_last_power_lvl)
-	var lvl_str: String = "Nv.%d" % power_lvl
 
 	var spit_ratio: float = clampf(_spit_cd_left / spit_max, 0.0, 1.0)
 	if lvl_changed or absf(spit_ratio - _hud_last_spit_cd) > 0.004 or (spit_ratio == 0.0 and _hud_last_spit_cd != 0.0):
 		_hud_last_spit_cd = spit_ratio
-		_spit_btn.level_text = lvl_str
+		_spit_btn.power_level = power_lvl
 		_spit_btn.cooldown_ratio = spit_ratio
 		_spit_btn.queue_redraw()
 
 	var dash_ratio: float = clampf(_dash_cd_left / dash_max, 0.0, 1.0)
 	if lvl_changed or absf(dash_ratio - _hud_last_dash_cd) > 0.004 or (dash_ratio == 0.0 and _hud_last_dash_cd != 0.0):
 		_hud_last_dash_cd = dash_ratio
-		_dash_btn.level_text = lvl_str
+		_dash_btn.power_level = power_lvl
 		_dash_btn.cooldown_ratio = dash_ratio
 		_dash_btn.queue_redraw()
 
@@ -2728,15 +2534,16 @@ func _draw_world_vfx(canvas: Node2D) -> void:
 				canvas.draw_arc(_warp_origin, ring_r, 0.0, TAU, 56, outer_ring, maxf(3.0, base_r * 0.30 * r_fade), true)
 				canvas.draw_arc(_warp_origin, ring_r, 0.0, TAU, 56, inner_ring, maxf(1.5, base_r * 0.10 * r_fade), true)
 
-	# Luminous lava-sparkle swim trail behind Charlie
+	# Subtle translucent glossy liquid-oil micro-beads behind Charlie
 	for td: Dictionary in _trail_dots:
 		var frac: float = clampf(float(td["life"]) / maxf(0.01, float(td["max_life"])), 0.0, 1.0)
 		var fade: float = frac * frac
 		var td_pos: Vector2 = td["pos"] as Vector2
 		var td_r: float = float(td["radius"]) * (0.45 + 0.55 * frac)
 		var col: Color = td["color"] as Color
-		_draw_soft_glow(canvas, td_pos, td_r * 2.2, Color(col.r, col.g * 0.82, col.b * 0.72, fade * 0.42))
-		_draw_soft_glow(canvas, td_pos, td_r * 0.92, Color(1.0, 0.95, 0.78, fade * 0.78))
+		_draw_soft_glow(canvas, td_pos, td_r * 1.85, Color(col.r, col.g, col.b, fade * 0.16))
+		canvas.draw_circle(td_pos, td_r, Color(col.r, col.g, col.b, fade * 0.32))
+		canvas.draw_circle(td_pos + Vector2(-td_r * 0.28, -td_r * 0.28), td_r * 0.28, Color(1.0, 0.97, 0.92, fade * 0.26))
 
 	# Shockwaves (soft outer halo band + crisp bright core ring + spawn flash)
 	for w: Dictionary in _shockwaves:
