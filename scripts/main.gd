@@ -1,19 +1,24 @@
 extends Node2D
 ## Main game orchestrator for CHARLIE — De l'atome au cosmos (Godot 4.3+ Mobile).
-## Programmatically builds the GPU background, Camera2D, Charlie, Ecosystem,
-## AudioEngine, CutscenePlayer, evolving lava spit & shockwave VFX, HUD,
-## multi-touch controls, safe-area layout, mobile lifecycle, and all menus/settings.
+## Programmatically builds HDR WorldEnvironment (AgX + selective bloom), crisp full-res
+## GPU backdrop, WorldAtmosphere depth planes, Camera2D, Charlie, Ecosystem, AudioEngine,
+## CutscenePlayer, additive HDR VFX, contemplative minimal HUD, world-space direct-glide
+## steering, living Ghibli title screen, safe-area layout, mobile lifecycle, and Visual QA harness.
 
 const SETTINGS_PATH: String = "user://settings.cfg"
 const BG_SHADER_PATH: String = "res://shaders/biolum_bg.gdshader"
 const DANGER_VIGNETTE_SHADER_PATH: String = "res://shaders/danger_vignette.gdshader"
+const WORLD_ATMOSPHERE_PATH: String = "res://scripts/world_atmosphere.gd"
+const TITLE_KEYART_PATH: String = "res://assets/art/keyart-landscape.jpg"
 const FONT_DISPLAY_PATH: String = "res://assets/fonts/Fraunces.ttf"
 const FONT_UI_PATH: String = "res://assets/fonts/Outfit.ttf"
 const COMBO_WINDOW: float = 1.9
 const MAX_COMBO: int = 6
 const PASSIVE_HEAL_SECONDS: float = 8.0
-const DIRECT_TOUCH_DEADZONE: float = 18.0
-const DIRECT_TOUCH_FULL_RADIUS: float = 110.0
+const QUICK_TAP_MAX_TIME: float = 0.20
+const QUICK_TAP_MAX_MOVE: float = 18.0
+const DOUBLE_TAP_MAX_INTERVAL: float = 0.36
+const DOUBLE_TAP_MAX_DIST: float = 88.0
 
 enum GameState {
 	TITLE,
@@ -41,6 +46,7 @@ var current_scale_index: int = 0
 var bites_in_scale: int = 0
 var total_eaten: int = 0
 var run_time: float = 0.0
+var _play_time: float = 0.0
 var _heal_bite_counter: int = 0
 var _time_since_hurt: float = 0.0
 var _combo_count: int = 0
@@ -61,21 +67,32 @@ var _predator_pulse_timer: float = 0.0
 var _safe_insets: Rect2 = Rect2()
 var _direct_touch_index: int = -1
 var _direct_touch_pos: Vector2 = Vector2.ZERO
+var _direct_touch_start_pos: Vector2 = Vector2.ZERO
+var _direct_touch_start_time: float = 0.0
+var _direct_touch_max_move: float = 0.0
+var _last_open_tap_time: float = -10.0
+var _last_open_tap_pos: Vector2 = Vector2.ZERO
+var _global_uniforms: Dictionary = {}
+var _is_capture_mode: bool = false
+var _capture_steer_override: Vector2 = Vector2.ZERO
 
-# Typography, theme & shared additive glow texture
+# Typography, theme & shared textures
 var _font_display: Font = null
 var _font_ui: Font = null
 var _font_ui_bold: Font = null
 var _font_ui_tracked: Font = null
 var _ui_theme: Theme = null
 var _glow_tex: GradientTexture2D = null
+var _cta_pill_normal: ImageTexture = null
+var _cta_pill_hover: ImageTexture = null
+var _cta_pill_pressed: ImageTexture = null
 
 # Core nodes
+var _world_env: WorldEnvironment = null
 var _bg_layer: CanvasLayer = null
-var _bg_viewport_container: SubViewportContainer = null
-var _bg_viewport: SubViewport = null
 var _bg_rect: ColorRect = null
 var _bg_mat: ShaderMaterial = null
+var _atmosphere: Node = null
 var _camera: Camera2D = null
 var _ecosystem: Ecosystem = null
 var _charlie: Charlie = null
@@ -100,7 +117,6 @@ var _danger_vignette: _DangerVignette = null
 var _hud_root: Control = null
 var _touch_target_overlay: _TouchTargetOverlay = null
 var _top_margin: MarginContainer = null
-var _mute_btn: _IconButton = null
 var _pause_btn: _IconButton = null
 var _joystick: VirtualJoystick = null
 var _spit_btn: _TouchPowerButton = null
@@ -120,10 +136,17 @@ var _banner_active: bool = false
 var _banner_elapsed: float = 0.0
 var _banner_duration: float = 2.8
 
-# Overlay menus
+# Overlay menus & living title screen
 var _menu_layer: CanvasLayer = null
 var _title_panel: Control = null
+var _title_art_rect: TextureRect = null
+var _title_fireflies: _TitleFireflies = null
+var _title_top_margin: MarginContainer = null
+var _title_stack: Control = null
+var _title_options_btn: _IconButton = null
+var _title_diff_buttons: Dictionary = {}
 var _pause_panel: Control = null
+var _pause_mute_btn: Button = null
 var _options_panel: Control = null
 var _options_scroll: ScrollContainer = null
 var _defeat_panel: Control = null
@@ -138,6 +161,7 @@ var _diff_buttons: Dictionary = {}
 var _diff_desc_label: Label = null
 var _bites_slider: HSlider = null
 var _bites_value_label: Label = null
+var _audio_toggle: CheckButton = null
 var _cinematic_toggle: CheckButton = null
 var _haptics_toggle: CheckButton = null
 
@@ -153,7 +177,7 @@ class _WorldVfxLayer:
 
 class _DangerVignette:
 	extends ColorRect
-	## 1-pass GPU smooth radial crimson edge vignette (danger_vignette.gdshader).
+	## 1-pass GPU soft breathing dusk-ember edge vignette (danger_vignette.gdshader).
 	var intensity: float = 0.0
 	var _mat: ShaderMaterial = null
 
@@ -180,24 +204,40 @@ class _DangerVignette:
 
 class _TouchTargetOverlay:
 	extends Control
-	## Lightweight screen-space overlay drawing a sleek luminous target ring
-	## at the player's direct-touch steering position.
+	## Delicate screen-space gossamer water-ripple expanding gently where the
+	## player's fingertip grazes the playfield.
 	var target_pos: Vector2 = Vector2.ZERO
 	var active: bool = false
 	var glow_tex: Texture2D = null
 
 	var _alpha: float = 0.0
-	var _pulse_time: float = 0.0
+	var _ripple_phase: float = 0.0
+	var _ripples: Array[Dictionary] = []
 
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		visible = false
 
+	func spawn_ripple(pos: Vector2) -> void:
+		if _ripples.size() >= 6:
+			_ripples.pop_front()
+		_ripples.append({
+			"pos": pos,
+			"age": 0.0,
+			"duration": 0.62,
+		})
+		visible = true
+		queue_redraw()
+
 	func set_target(pos: Vector2, is_now_active: bool) -> void:
+		var was_active: bool = active
 		target_pos = pos
 		active = is_now_active
 		if active:
+			if not was_active:
+				_ripple_phase = 0.0
+				spawn_ripple(pos)
 			visible = true
 			queue_redraw()
 
@@ -207,55 +247,164 @@ class _TouchTargetOverlay:
 	func clear_immediate() -> void:
 		active = false
 		_alpha = 0.0
+		_ripples.clear()
 		visible = false
 		queue_redraw()
 
 	func _process(delta: float) -> void:
 		var dt: float = clampf(delta, 0.0, 0.05)
 		var goal: float = 1.0 if active else 0.0
-		if active or _alpha > 0.005:
-			_pulse_time += dt
-			var rate: float = 18.0 if active else 12.0
-			_alpha = lerpf(_alpha, goal, 1.0 - exp(-dt * rate))
-			if not active and _alpha <= 0.005:
-				_alpha = 0.0
-				visible = false
-			else:
-				visible = true
-			queue_redraw()
+		var any_alive: bool = active or _alpha > 0.004 or not _ripples.is_empty()
+		if not any_alive:
+			return
+
+		var rate: float = 14.0 if active else 9.0
+		_alpha = lerpf(_alpha, goal, 1.0 - exp(-dt * rate))
+		if not active and _alpha <= 0.004:
+			_alpha = 0.0
+		if active:
+			_ripple_phase = fposmod(_ripple_phase + dt * 1.15, 1.0)
+
+		var i: int = _ripples.size() - 1
+		while i >= 0:
+			var r: Dictionary = _ripples[i]
+			r["age"] = float(r["age"]) + dt
+			if float(r["age"]) >= float(r["duration"]):
+				_ripples.remove_at(i)
+			i -= 1
+
+		visible = active or _alpha > 0.004 or not _ripples.is_empty()
+		queue_redraw()
 
 	func _draw() -> void:
-		if _alpha <= 0.005:
+		# One-shot expanding gossamer water-ripples on touch graze
+		for r: Dictionary in _ripples:
+			var age: float = float(r["age"])
+			var dur: float = maxf(0.05, float(r["duration"]))
+			var t: float = clampf(age / dur, 0.0, 1.0)
+			var ease_out: float = 1.0 - pow(1.0 - t, 2.4)
+			var fade: float = (1.0 - t) * (1.0 - t)
+			var rad: float = lerpf(10.0, 44.0, ease_out)
+			var pos: Vector2 = r["pos"] as Vector2
+			draw_arc(pos, rad, 0.0, TAU, 40, Color(0.92, 0.97, 1.0, 0.34 * fade), 1.5, true)
+
+		# Single whisper-delicate gossamer ripple gliding beneath held fingertip
+		if _alpha > 0.004:
+			var ease_p: float = 1.0 - pow(1.0 - _ripple_phase, 2.0)
+			var wave_fade: float = sin(_ripple_phase * PI)
+			var rad: float = lerpf(13.0, 34.0, ease_p)
+			var col: Color = Color(0.95, 0.98, 1.0, (0.14 + 0.18 * wave_fade) * _alpha)
+			if glow_tex != null:
+				var halo_r: float = 18.0
+				draw_texture_rect(
+					glow_tex,
+					Rect2(target_pos - Vector2(halo_r, halo_r), Vector2(halo_r * 2.0, halo_r * 2.0)),
+					false,
+					Color(0.88, 0.96, 1.0, 0.12 * _alpha)
+				)
+			draw_arc(target_pos, rad, 0.0, TAU, 36, col, 1.35, true)
+
+
+class _TitleFireflies:
+	extends Control
+	## Lightweight live golden firefly overlay drifting serenely across the
+	## painted Ghibli keyart on the title screen.
+	const COUNT: int = 28
+	var glow_tex: Texture2D = null
+	var _time: float = 0.0
+	var _flies: Array[Dictionary] = []
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+		rng.seed = 20260417
+		_flies.clear()
+		for i: int in range(COUNT):
+			var is_emerald: bool = rng.randf() < 0.24
+			var fx: float = 0.0
+			var fy: float = 0.0
+			var rise_spd: float = rng.randf_range(0.008, 0.022)
+			if i < 20:
+				# Enchanted forest & left half framing Charlie
+				fx = rng.randf_range(0.03, 0.47)
+				fy = rng.randf_range(0.08, 0.94)
+			elif i < 24:
+				# Upper night canopy / moonlit lantern edge above the title
+				fx = rng.randf_range(0.50, 0.96)
+				fy = rng.randf_range(0.05, 0.20)
+				rise_spd = rng.randf_range(0.004, 0.011)
+			elif i < 26:
+				# Lower foreground foliage edge below the difficulty chips
+				fx = rng.randf_range(0.50, 0.94)
+				fy = rng.randf_range(0.80, 0.95)
+				rise_spd = rng.randf_range(0.004, 0.010)
+			else:
+				# Far-right tree framing edge
+				fx = rng.randf_range(0.93, 0.98)
+				fy = rng.randf_range(0.22, 0.78)
+				rise_spd = rng.randf_range(0.006, 0.014)
+			_flies.append({
+				"x": fx,
+				"y": fy,
+				"rise": rise_spd,
+				"sway_x": rng.randf_range(0.010, 0.028),
+				"sway_y": rng.randf_range(0.008, 0.018),
+				"freq": rng.randf_range(0.45, 1.15),
+				"pulse_freq": rng.randf_range(1.1, 2.5),
+				"phase": rng.randf_range(0.0, TAU),
+				"radius": rng.randf_range(2.2, 4.6),
+				"color": Color(0.68, 0.98, 0.66, 1.0) if is_emerald else Color(1.0, 0.86, 0.44, 1.0),
+			})
+
+	func _process(delta: float) -> void:
+		if not is_visible_in_tree():
 			return
-		var a: float = _alpha
-		var pulse: float = 0.5 + 0.5 * sin(_pulse_time * 5.2)
-		var outer_r: float = 27.0 + pulse * 3.5
-		var inner_r: float = 15.0 + pulse * 1.2
+		_time += clampf(delta, 0.0, 0.05)
+		queue_redraw()
 
-		# Soft warm coral-gold radial glow
-		if glow_tex != null:
-			var halo_r: float = outer_r * 1.65
-			draw_texture_rect(
-				glow_tex,
-				Rect2(target_pos - Vector2(halo_r, halo_r), Vector2(halo_r * 2.0, halo_r * 2.0)),
-				false,
-				Color(1.0, 0.70, 0.38, 0.30 * a)
-			)
+	func _draw() -> void:
+		var sz: Vector2 = size
+		if sz.x <= 1.0 or sz.y <= 1.0:
+			return
+		for f: Dictionary in _flies:
+			var ph: float = float(f["phase"])
+			var freq: float = float(f["freq"])
+			var y_norm: float = fposmod(float(f["y"]) - _time * float(f["rise"]), 1.06) - 0.03
+			var x_norm: float = float(f["x"]) + sin(_time * freq + ph) * float(f["sway_x"])
+			var y_off: float = cos(_time * (freq * 0.78) + ph * 1.3) * float(f["sway_y"])
+			var cur_y: float = y_norm + y_off
+			var pos: Vector2 = Vector2(x_norm * sz.x, cur_y * sz.y)
 
-		# Subtle pulsing outer ring
-		draw_arc(target_pos, outer_r, 0.0, TAU, 36, Color(1.0, 0.78, 0.46, 0.34 * a), 2.4, true)
-		# Crisp inner luminous ring
-		draw_arc(target_pos, inner_r, 0.0, TAU, 32, Color(1.0, 0.95, 0.82, 0.78 * a), 1.8, true)
-		# Warm core dot
-		draw_circle(target_pos, 3.4, Color(1.0, 0.96, 0.86, 0.88 * a))
+			var pulse_raw: float = 0.5 + 0.5 * sin(_time * float(f["pulse_freq"]) + ph * 2.1)
+			var pulse: float = 0.25 + 0.75 * (pulse_raw * pulse_raw)
+			var edge_fade: float = smoothstep(0.0, 0.08, y_norm) * (1.0 - smoothstep(0.92, 1.0, y_norm))
+			# Keep bright dots gently clear of the right-side title & subtitle typography stack
+			var tdx: float = (x_norm - 0.72) / 0.20
+			var tdy: float = (cur_y - 0.50) / 0.21
+			var text_clear: float = smoothstep(0.90, 1.35, sqrt(tdx * tdx + tdy * tdy))
+			var alpha: float = pulse * edge_fade * text_clear
+			if alpha <= 0.01:
+				continue
+
+			var base_col: Color = f["color"] as Color
+			var r: float = float(f["radius"])
+			if glow_tex != null:
+				var halo_r: float = r * (4.6 + 1.8 * pulse)
+				draw_texture_rect(
+					glow_tex,
+					Rect2(pos - Vector2(halo_r, halo_r), Vector2(halo_r * 2.0, halo_r * 2.0)),
+					false,
+					Color(base_col.r, base_col.g, base_col.b, 0.44 * alpha)
+				)
+			draw_circle(pos, r * 0.58, Color(1.0, 0.98, 0.88, 0.90 * alpha))
 
 
 class _IconButton:
 	extends Button
-	## Circular HUD button that renders crisp anti-aliased vector icons instead of
-	## emoji glyphs (which render as tofu boxes on Android/iOS default fonts).
-	var icon_name: String = "sound_on"
-	var icon_color: Color = Color(0.92, 0.97, 1.0, 0.96)
+	## Minimal anti-aliased vector icon button (no emoji tofu boxes on mobile).
+	var icon_name: String = "pause"
+	var icon_color: Color = Color(0.98, 0.96, 0.90, 0.96)
 
 	func set_icon_name(new_icon: String) -> void:
 		if icon_name != new_icon:
@@ -294,42 +443,84 @@ class _IconButton:
 				draw_line(c + Vector2(s * 0.35, -s * 0.44), c + Vector2(s * 1.05, s * 0.44), x_col, 2.4, true)
 				draw_line(c + Vector2(s * 1.05, -s * 0.44), c + Vector2(s * 0.35, s * 0.44), x_col, 2.4, true)
 			"pause":
-				var bar_w: float = s * 0.42
-				var bar_h: float = s * 1.48
-				var gap: float = s * 0.26
-				draw_rect(Rect2(c.x - gap - bar_w, c.y - bar_h * 0.5, bar_w, bar_h), col, true)
-				draw_rect(Rect2(c.x + gap, c.y - bar_h * 0.5, bar_w, bar_h), col, true)
+				var bar_w: float = s * 0.36
+				var bar_h: float = s * 1.44
+				var gap: float = s * 0.30
+				draw_line(
+					c + Vector2(-gap - bar_w * 0.5, -bar_h * 0.5),
+					c + Vector2(-gap - bar_w * 0.5, bar_h * 0.5),
+					col,
+					bar_w,
+					true
+				)
+				draw_line(
+					c + Vector2(gap + bar_w * 0.5, -bar_h * 0.5),
+					c + Vector2(gap + bar_w * 0.5, bar_h * 0.5),
+					col,
+					bar_w,
+					true
+				)
 			"gear":
-				draw_arc(c, s * 0.62, 0.0, TAU, 24, col, 2.6, true)
-				draw_arc(c, s * 0.24, 0.0, TAU, 16, col, 1.8, true)
+				draw_arc(c, s * 0.58, 0.0, TAU, 24, col, 2.2, true)
+				draw_arc(c, s * 0.22, 0.0, TAU, 16, col, 1.7, true)
 				for i: int in range(8):
 					var ang: float = float(i) * TAU / 8.0
 					var dir: Vector2 = Vector2.from_angle(ang)
-					draw_line(c + dir * (s * 0.72), c + dir * (s * 1.02), col, 2.8, true)
+					draw_line(c + dir * (s * 0.68), c + dir * (s * 0.98), col, 2.4, true)
 
 
 class _TouchPowerButton:
 	extends Control
-	## Discreet multi-touch circular power button with clean vector icons,
-	## translucent cooldown sweep, and subtle golden/violet evolution border tint.
+	## Borderless translucent liquid-glass teardrop / water-orb power control.
+	## Breathes quietly at 0.24 alpha in peaceful moments, smoothly awakens to 0.82
+	## when a predator approaches, and renders a diegetic bottom-to-top liquid fill
+	## cooldown with meniscus shimmer.
 	signal activated
 
+	const PEACEFUL_ALPHA: float = 0.24
+	const ALERT_ALPHA: float = 0.82
+	const CONTOUR_STEPS: int = 36
+
 	var icon_kind: String = "flame" # "flame" | "shockwave"
-	var power_level: int = 1 # 1 = base, 2 = warm gold border tint, 3 = luminous violet border tint
+	var power_level: int = 1 # 1 = base, 2 = warm gold iridescence, 3 = luminous violet iridescence
 	var accent_color: Color = Color(1.0, 0.55, 0.30, 1.0)
 	var cooldown_ratio: float = 0.0 # 0.0 = ready, 1.0 = full cooldown
 	var glow_tex: Texture2D = null
 
 	var _pressed_index: int = -1
+	var _target_context_alpha: float = PEACEFUL_ALPHA
+	var _context_alpha: float = PEACEFUL_ALPHA
+	var _breath_time: float = 0.0
 
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
-		custom_minimum_size = Vector2(90.0, 90.0)
+		custom_minimum_size = Vector2(88.0, 96.0)
 		size = custom_minimum_size
+
+	func set_context_visibility(val: float) -> void:
+		_target_context_alpha = clampf(val, PEACEFUL_ALPHA, ALERT_ALPHA)
 
 	func reset_touch() -> void:
 		if _pressed_index != -1:
 			_pressed_index = -1
+			queue_redraw()
+
+	func _process(delta: float) -> void:
+		if not is_visible_in_tree():
+			return
+		var dt: float = clampf(delta, 0.0, 0.05)
+		var goal: float = _target_context_alpha
+		if _pressed_index != -1:
+			goal = 0.94
+		elif cooldown_ratio > 0.004:
+			goal = maxf(goal, 0.42)
+		var rate: float = 7.5 if goal > _context_alpha else 3.2
+		var prev_a: float = _context_alpha
+		_context_alpha = lerpf(_context_alpha, goal, 1.0 - exp(-dt * rate))
+		if absf(_context_alpha - goal) < 0.002:
+			_context_alpha = goal
+		_breath_time += dt
+		if cooldown_ratio > 0.004 or absf(_context_alpha - prev_a) > 0.002 or _pressed_index != -1 or _context_alpha > 0.32:
 			queue_redraw()
 
 	func _input(event: InputEvent) -> void:
@@ -349,123 +540,195 @@ class _TouchPowerButton:
 					_pressed_index = -1
 					queue_redraw()
 
-	func _get_border_tint() -> Color:
+	func _get_liquid_tint() -> Color:
 		if power_level >= 3:
-			# Subtle luminous violet evolution tint for Nv.3
-			return accent_color.lerp(Color(0.80, 0.56, 1.0, 1.0), 0.72)
+			return accent_color.lerp(Color(0.82, 0.58, 1.0, 1.0), 0.65)
 		if power_level == 2:
-			# Subtle warm golden evolution tint for Nv.2
-			return accent_color.lerp(Color(1.0, 0.84, 0.44, 1.0), 0.68)
+			return accent_color.lerp(Color(1.0, 0.84, 0.44, 1.0), 0.58)
 		return accent_color
 
-	func _draw() -> void:
-		var center: Vector2 = size * 0.5
-		var r: float = minf(size.x, size.y) * 0.43
-		var is_ready: bool = cooldown_ratio <= 0.001
-		var is_down: bool = _pressed_index != -1
-		var base_alpha: float = 0.96 if is_down else (0.68 if is_ready else 0.46)
-		var border_tint: Color = _get_border_tint()
+	func _sample_droplet_point(center: Vector2, rx: float, ry: float, theta: float) -> Vector2:
+		# Organic teardrop / liquid water-orb contour: gently tapered crown, plush rounded belly
+		var s: float = sin(theta)
+		var c: float = cos(theta)
+		var taper: float = 1.0 - 0.16 * maxf(0.0, -s) * (1.0 - 0.35 * c * c)
+		var pinch_top: float = 1.0 + 0.10 * maxf(0.0, -s)
+		return center + Vector2(c * rx * taper, s * ry * pinch_top)
 
-		# Soft radial halo when ready
+	func _build_droplet_poly(center: Vector2, rx: float, ry: float) -> PackedVector2Array:
+		var pts: PackedVector2Array = PackedVector2Array()
+		pts.resize(CONTOUR_STEPS)
+		for i: int in range(CONTOUR_STEPS):
+			var ang: float = (float(i) / float(CONTOUR_STEPS)) * TAU
+			pts[i] = _sample_droplet_point(center, rx, ry, ang)
+		return pts
+
+	func _build_liquid_fill_poly(
+		center: Vector2,
+		rx: float,
+		ry: float,
+		ready_frac: float,
+		wave_phase: float
+	) -> Dictionary:
+		var top_y: float = center.y - ry * 1.10
+		var bot_y: float = center.y + ry
+		var fill_y: float = lerpf(bot_y, top_y, ready_frac)
+		var wave_amp: float = (1.0 - absf(ready_frac * 2.0 - 1.0)) * 3.2
+		var slices: int = 14
+		var left_pts: Array[Vector2] = []
+		var right_pts: Array[Vector2] = []
+		var surface_pts: PackedVector2Array = PackedVector2Array()
+
+		for k: int in range(slices + 1):
+			var frac_y: float = float(k) / float(slices)
+			var y_pos: float = lerpf(bot_y - 1.0, fill_y, frac_y)
+			var ny: float = clampf((y_pos - center.y) / maxf(ry, 1.0), -1.06, 0.995)
+			var half_w: float = 0.0
+			if ny < 0.0:
+				var ny_scaled: float = clampf(ny / 1.10, -1.0, 0.0)
+				var base_w: float = sqrt(maxf(0.0, 1.0 - ny_scaled * ny_scaled))
+				var taper: float = 1.0 - 0.16 * maxf(0.0, -ny_scaled)
+				half_w = rx * base_w * taper
+			else:
+				half_w = rx * sqrt(maxf(0.0, 1.0 - ny * ny))
+			if half_w > 0.6:
+				left_pts.append(Vector2(center.x - half_w, y_pos))
+				right_pts.append(Vector2(center.x + half_w, y_pos))
+
+		var poly: PackedVector2Array = PackedVector2Array()
+		if left_pts.size() >= 2:
+			# Bottom-right up to right meniscus
+			for p: Vector2 in right_pts:
+				poly.append(p)
+			# Liquid wave surface from right to left
+			var r_top: Vector2 = right_pts[right_pts.size() - 1]
+			var l_top: Vector2 = left_pts[left_pts.size() - 1]
+			var surf_steps: int = 10
+			for s_i: int in range(surf_steps + 1):
+				var u: float = float(s_i) / float(surf_steps)
+				var sx: float = lerpf(r_top.x, l_top.x, u)
+				var edge_damp: float = sin(u * PI)
+				var sy: float = fill_y + sin(u * PI * 2.2 + wave_phase) * wave_amp * edge_damp
+				var sp: Vector2 = Vector2(sx, sy)
+				poly.append(sp)
+				surface_pts.append(sp)
+			# Left meniscus back down to bottom-left
+			for idx: int in range(left_pts.size() - 1, -1, -1):
+				poly.append(left_pts[idx])
+
+		return {"poly": poly, "surface": surface_pts}
+
+	func _draw() -> void:
+		var center: Vector2 = Vector2(size.x * 0.5, size.y * 0.54)
+		var rx: float = minf(size.x, size.y) * 0.39
+		var ry: float = rx * 1.05
+		var is_ready: bool = cooldown_ratio <= 0.004
+		var is_down: bool = _pressed_index != -1
+		var ready_frac: float = clampf(1.0 - cooldown_ratio, 0.0, 1.0)
+		var breath: float = 0.94 + 0.06 * sin(_breath_time * 2.2)
+		var a: float = clampf(_context_alpha * (1.0 if is_down else breath), 0.16, 0.98)
+		var tint: Color = _get_liquid_tint()
+
+		# 1. Soft translucent ambient bloom halo (borderless, no dark box)
+		var halo_r: float = rx * (1.65 if is_down else (1.52 if is_ready else 1.25))
+		if glow_tex != null:
+			var halo_a: float = (0.34 if is_down else (0.24 if is_ready else 0.10)) * a
+			draw_texture_rect(
+				glow_tex,
+				Rect2(center - Vector2(halo_r, halo_r), Vector2(halo_r * 2.0, halo_r * 2.0)),
+				false,
+				Color(tint.r, tint.g, tint.b, halo_a)
+			)
+
+		# 2. Whisper-translucent frosted water-glass shell (completely borderless)
+		var shell_poly: PackedVector2Array = _build_droplet_poly(center, rx, ry)
+		draw_colored_polygon(shell_poly, Color(0.84, 0.94, 0.98, 0.13 * a))
+
+		# 3. Diegetic bottom-to-top liquid fill volume
 		if is_ready:
-			var halo_r: float = r * (1.50 if is_down else 1.36)
+			var full_col: Color = Color(
+				lerpf(tint.r, 1.0, 0.16),
+				lerpf(tint.g, 1.0, 0.14),
+				lerpf(tint.b, 1.0, 0.16),
+				(0.46 if is_down else 0.32) * a
+			)
+			draw_colored_polygon(shell_poly, full_col)
+			# Soft inner caustic luminance pooled near droplet belly
 			if glow_tex != null:
+				var pool_c: Vector2 = center + Vector2(0.0, ry * 0.24)
+				var pool_r: float = rx * 0.95
 				draw_texture_rect(
 					glow_tex,
-					Rect2(center - Vector2(halo_r, halo_r), Vector2(halo_r * 2.0, halo_r * 2.0)),
+					Rect2(pool_c - Vector2(pool_r, pool_r), Vector2(pool_r * 2.0, pool_r * 2.0)),
 					false,
-					Color(border_tint.r, border_tint.g, border_tint.b, (0.36 if is_down else 0.22) * base_alpha)
+					Color(minf(1.0, tint.r + 0.18), minf(1.0, tint.g + 0.18), minf(1.0, tint.b + 0.15), 0.34 * a)
 				)
-			else:
-				draw_circle(center, r * (1.14 if is_down else 1.08), Color(border_tint.r, border_tint.g, border_tint.b, 0.18 * base_alpha))
+		elif ready_frac > 0.02:
+			var fill_data: Dictionary = _build_liquid_fill_poly(center, rx * 0.96, ry * 0.96, ready_frac, _breath_time * 3.4)
+			var liq_poly: PackedVector2Array = fill_data["poly"] as PackedVector2Array
+			if liq_poly.size() >= 3:
+				draw_colored_polygon(liq_poly, Color(tint.r, tint.g, tint.b, 0.34 * a))
+			var surf: PackedVector2Array = fill_data["surface"] as PackedVector2Array
+			if surf.size() >= 2:
+				draw_polyline(surf, Color(1.0, 0.98, 0.92, 0.56 * a), 1.6, true)
 
-		# Translucent glassmorphic button fill
-		var fill_col: Color = Color(0.04, 0.10, 0.17, 0.62 * base_alpha)
-		if is_down:
-			fill_col = Color(border_tint.r * 0.34, border_tint.g * 0.26, border_tint.b * 0.28, 0.84)
-		draw_circle(center, r, fill_col)
-
-		# Subtle inner top highlight
-		draw_arc(center, r - 1.5, -PI * 0.85, -PI * 0.15, 20, Color(1.0, 1.0, 1.0, 0.18 * base_alpha), 1.4, true)
-
-		# Translucent cooldown sweep sector (pie wedge covering remaining cooldown)
-		if not is_ready:
-			var cd_clamped: float = clampf(cooldown_ratio, 0.0, 1.0)
-			var segs: int = maxi(4, int(ceil(cd_clamped * 28.0)))
-			var wedge: PackedVector2Array = PackedVector2Array()
-			wedge.append(center)
-			var start_a: float = -PI * 0.5
-			var end_a: float = start_a + TAU * cd_clamped
-			for i: int in range(segs + 1):
-				var ang: float = lerpf(start_a, end_a, float(i) / float(segs))
-				wedge.append(center + Vector2(cos(ang), sin(ang)) * (r - 1.5))
-			draw_colored_polygon(wedge, Color(0.01, 0.04, 0.08, 0.48))
-
-		# Clean centered vector icon (Flame or Concentric Shockwave / Bolt)
-		var icon_alpha: float = base_alpha if is_ready else 0.42
-		if icon_kind == "flame":
-			_draw_flame_icon(center, r * 0.54, icon_alpha)
-		else:
-			_draw_shockwave_icon(center, r * 0.54, icon_alpha)
-
-		# Outer ring + subtle evolution tint + cooldown progress arc
-		var ring_col: Color = Color(border_tint.r, border_tint.g, border_tint.b, 0.86 * base_alpha) if is_ready else Color(0.60, 0.74, 0.82, 0.32)
-		var ring_w: float = (2.6 if power_level >= 2 else 2.0) if is_ready else 1.6
-		draw_arc(center, r, 0.0, TAU, 44, ring_col, ring_w, true)
+		# 4. Liquid-glass glossy specular highlight (upper-left refraction crescent + glint)
+		var glint_c: Vector2 = center + Vector2(-rx * 0.34, -ry * 0.34)
+		draw_circle(glint_c, rx * 0.14, Color(1.0, 0.99, 0.97, 0.42 * a))
+		draw_circle(glint_c + Vector2(rx * 0.16, -ry * 0.16), rx * 0.055, Color(1.0, 1.0, 1.0, 0.52 * a))
+		# Soft lower rim bounce light (subtle, no hard outline)
+		draw_arc(center + Vector2(0.0, ry * 0.04), rx * 0.86, PI * 0.22, PI * 0.78, 18, Color(tint.r, tint.g, tint.b, 0.32 * a), 1.5, true)
 		if power_level >= 2 and is_ready:
-			# Subtle second inner shimmer ring for evolved powers (Nv.2 gold / Nv.3 violet)
-			draw_arc(center, r - 3.2, 0.0, TAU, 40, Color(border_tint.r, border_tint.g, border_tint.b, 0.36 * base_alpha), 1.2, true)
-		if not is_ready:
-			var ready_frac: float = clampf(1.0 - cooldown_ratio, 0.0, 1.0)
-			draw_arc(center, r - 2.0, -PI * 0.5, -PI * 0.5 + TAU * ready_frac, 36, Color(border_tint.r, border_tint.g, border_tint.b, 0.82), 2.8, true)
+			# Delicate iridescent dewdrop shimmer for evolved powers (Nv.2 gold / Nv.3 violet)
+			draw_arc(center, rx * 0.90, -PI * 0.76, -PI * 0.24, 16, Color(tint.r, tint.g, tint.b, 0.44 * a), 1.4, true)
+
+		# 5. Clean glowing vector glyph centered inside the droplet
+		var glyph_a: float = a * (0.96 if is_ready else (0.36 + 0.40 * ready_frac))
+		if icon_kind == "flame":
+			_draw_flame_icon(center + Vector2(0.0, 2.0), rx * 0.54, glyph_a)
+		else:
+			_draw_ripple_icon(center + Vector2(0.0, 2.0), rx * 0.56, glyph_a)
 
 	func _draw_flame_icon(c: Vector2, s: float, alpha: float) -> void:
-		var outer_col: Color = Color(1.0, 0.48, 0.26, alpha)
-		var inner_col: Color = Color(1.0, 0.86, 0.48, alpha)
+		var outer_col: Color = Color(1.0, 0.58, 0.32, alpha * 0.92)
+		var inner_col: Color = Color(1.0, 0.93, 0.66, alpha)
 		var outer: PackedVector2Array = PackedVector2Array([
-			c + Vector2(0.0, -s * 1.05),
-			c + Vector2(s * 0.48, -s * 0.32),
-			c + Vector2(s * 0.68, s * 0.26),
-			c + Vector2(s * 0.46, s * 0.78),
-			c + Vector2(0.0, s * 0.96),
-			c + Vector2(-s * 0.46, s * 0.78),
-			c + Vector2(-s * 0.68, s * 0.26),
-			c + Vector2(-s * 0.44, -s * 0.24),
-			c + Vector2(-s * 0.16, -s * 0.56),
+			c + Vector2(0.0, -s * 1.06),
+			c + Vector2(s * 0.46, -s * 0.30),
+			c + Vector2(s * 0.64, s * 0.28),
+			c + Vector2(s * 0.44, s * 0.76),
+			c + Vector2(0.0, s * 0.94),
+			c + Vector2(-s * 0.44, s * 0.76),
+			c + Vector2(-s * 0.64, s * 0.28),
+			c + Vector2(-s * 0.42, -s * 0.22),
+			c + Vector2(-s * 0.14, -s * 0.56),
 		])
 		draw_colored_polygon(outer, outer_col)
 		var inner: PackedVector2Array = PackedVector2Array([
-			c + Vector2(0.0, -s * 0.32),
-			c + Vector2(s * 0.28, s * 0.20),
-			c + Vector2(s * 0.24, s * 0.62),
-			c + Vector2(0.0, s * 0.78),
-			c + Vector2(-s * 0.24, s * 0.62),
-			c + Vector2(-s * 0.28, s * 0.20),
+			c + Vector2(0.0, -s * 0.28),
+			c + Vector2(s * 0.26, s * 0.22),
+			c + Vector2(s * 0.22, s * 0.60),
+			c + Vector2(0.0, s * 0.76),
+			c + Vector2(-s * 0.22, s * 0.60),
+			c + Vector2(-s * 0.26, s * 0.22),
 		])
 		draw_colored_polygon(inner, inner_col)
 
-	func _draw_shockwave_icon(c: Vector2, s: float, alpha: float) -> void:
-		var ring_col: Color = Color(0.45, 0.94, 0.98, alpha * 0.88)
-		var bolt_col: Color = Color(0.94, 0.99, 1.0, alpha)
-		# Concentric ripple arcs
-		draw_arc(c, s * 0.92, -PI * 0.72, -PI * 0.18, 16, Color(ring_col.r, ring_col.g, ring_col.b, alpha * 0.52), 2.0, true)
-		draw_arc(c, s * 0.92, PI * 0.28, PI * 0.82, 16, Color(ring_col.r, ring_col.g, ring_col.b, alpha * 0.52), 2.0, true)
-		draw_arc(c, s * 0.62, 0.0, TAU, 24, ring_col, 2.0, true)
-		# Crisp central energy bolt
-		var bolt: PackedVector2Array = PackedVector2Array([
-			c + Vector2(s * 0.14, -s * 0.76),
-			c + Vector2(-s * 0.34, s * 0.06),
-			c + Vector2(-s * 0.02, s * 0.06),
-			c + Vector2(-s * 0.16, s * 0.76),
-			c + Vector2(s * 0.34, -s * 0.08),
-			c + Vector2(s * 0.02, -s * 0.08),
-		])
-		draw_colored_polygon(bolt, bolt_col)
+	func _draw_ripple_icon(c: Vector2, s: float, alpha: float) -> void:
+		var outer_col: Color = Color(0.54, 0.96, 1.0, alpha * 0.52)
+		var mid_col: Color = Color(0.76, 0.98, 1.0, alpha * 0.84)
+		var core_col: Color = Color(0.98, 1.0, 1.0, alpha)
+		# Concentric liquid-wave ripple rings + luminous dew core
+		draw_arc(c, s * 0.94, 0.0, TAU, 32, outer_col, 1.5, true)
+		draw_arc(c, s * 0.58, 0.0, TAU, 28, mid_col, 2.0, true)
+		draw_circle(c, s * 0.20, core_col)
+
 
 
 func _ready() -> void:
 	get_tree().set_quit_on_go_back(false)
 	load_settings()
+	_cache_global_shader_uniforms()
 	_setup_fonts_and_vfx_resources()
 	_setup_background()
 	_setup_world()
@@ -476,6 +739,21 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(_update_safe_area)
 	_update_safe_area()
 	_enter_title_screen()
+
+	var capture_dir: String = _get_capture_shots_dir()
+	if not capture_dir.is_empty():
+		_is_capture_mode = true
+		seed(42069)
+		if _audio != null:
+			_audio.set_muted(true)
+		call_deferred("_run_visual_capture", capture_dir)
+
+
+func _cache_global_shader_uniforms() -> void:
+	_global_uniforms.clear()
+	for pname: StringName in [&"g_key_light_dir", &"g_world_ambient", &"g_world_rim_color", &"g_charlie_light", &"g_charlie_color"]:
+		if ProjectSettings.has_setting("shader_globals/" + String(pname)):
+			_global_uniforms[pname] = true
 
 
 func _make_font_variation(base: Font, weight: int) -> Font:
@@ -489,6 +767,46 @@ func _make_font_variation(base: Font, weight: int) -> Font:
 	return fv
 
 
+func _bake_cta_pill_texture(left_col: Color, right_col: Color, glow_strength: float) -> ImageTexture:
+	# Anti-aliased horizontal coral-peach gradient pill with warm outer glow halo
+	const W: int = 280
+	const H: int = 76
+	const PAD_X: float = 14.0
+	const PAD_Y: float = 12.0
+	var img: Image = Image.create(W, H, false, Image.FORMAT_RGBA8)
+	var half_w: float = float(W) * 0.5
+	var half_h: float = float(H) * 0.5
+	var cap_r: float = half_h - PAD_Y
+	var half_seg: float = maxf(0.0, half_w - PAD_X - cap_r)
+	var glow_col: Color = left_col.lerp(right_col, 0.55)
+
+	for y: int in range(H):
+		var py: float = float(y) + 0.5 - half_h
+		var ny: float = clampf((py + cap_r) / maxf(cap_r * 2.0, 1.0), 0.0, 1.0)
+		for x: int in range(W):
+			var px: float = float(x) + 0.5 - half_w
+			var clamped_x: float = clampf(px, -half_seg, half_seg)
+			var dist: float = Vector2(px - clamped_x, py).length() - cap_r
+			if dist <= 0.75:
+				var u: float = clampf((px + half_seg + cap_r) / maxf((half_seg + cap_r) * 2.0, 1.0), 0.0, 1.0)
+				var col: Color = left_col.lerp(right_col, u)
+				# Subtle warm top highlight for lush luminous depth
+				var top_sheen: float = pow(1.0 - ny, 2.6) * 0.20
+				var bot_shade: float = pow(ny, 2.4) * 0.08
+				col.r = clampf(col.r + top_sheen - bot_shade, 0.0, 1.0)
+				col.g = clampf(col.g + top_sheen * 0.85 - bot_shade, 0.0, 1.0)
+				col.b = clampf(col.b + top_sheen * 0.65 - bot_shade, 0.0, 1.0)
+				var edge_a: float = clampf(0.75 - dist, 0.0, 1.0)
+				col.a = edge_a
+				img.set_pixel(x, y, col)
+			else:
+				var g_t: float = clampf(1.0 - dist / 12.0, 0.0, 1.0)
+				var g_a: float = g_t * g_t * glow_strength
+				if g_a > 0.002:
+					img.set_pixel(x, y, Color(glow_col.r, glow_col.g, glow_col.b, g_a))
+	return ImageTexture.create_from_image(img)
+
+
 func _setup_fonts_and_vfx_resources() -> void:
 	if ResourceLoader.exists(FONT_DISPLAY_PATH):
 		var display_base: Font = load(FONT_DISPLAY_PATH) as Font
@@ -499,7 +817,7 @@ func _setup_fonts_and_vfx_resources() -> void:
 		_font_ui_bold = _make_font_variation(ui_base, 650)
 		var tracked: FontVariation = _make_font_variation(ui_base, 650) as FontVariation
 		if tracked != null:
-			tracked.spacing_glyph = 3
+			tracked.spacing_glyph = 4
 			_font_ui_tracked = tracked
 
 	_ui_theme = Theme.new()
@@ -507,7 +825,7 @@ func _setup_fonts_and_vfx_resources() -> void:
 		_ui_theme.default_font = _font_ui
 		_ui_theme.default_font_size = 15
 
-	# Shared 64x64 soft radial glow texture (white alpha 1.0 -> 0.0) for additive-feeling VFX
+	# Shared 64x64 soft radial glow texture (white alpha 1.0 -> 0.0) for additive VFX & fireflies
 	var glow_grad: Gradient = Gradient.new()
 	glow_grad.offsets = PackedFloat32Array([0.0, 0.28, 0.65, 1.0])
 	glow_grad.colors = PackedColorArray([
@@ -524,6 +842,11 @@ func _setup_fonts_and_vfx_resources() -> void:
 	_glow_tex.fill_to = Vector2(1.0, 0.5)
 	_glow_tex.gradient = glow_grad
 
+	# Pre-baked warm coral-peach gradient pill textures for the title CTA (#ff9966 -> #ff6f61)
+	_cta_pill_normal = _bake_cta_pill_texture(Color("#ff9966"), Color("#ff6f61"), 0.44)
+	_cta_pill_hover = _bake_cta_pill_texture(Color("#ffa97a"), Color("#ff7e70"), 0.58)
+	_cta_pill_pressed = _bake_cta_pill_texture(Color("#f08252"), Color("#e85e50"), 0.34)
+
 
 func _notification(what: int) -> void:
 	match what:
@@ -531,7 +854,7 @@ func _notification(what: int) -> void:
 			_handle_back_request()
 		NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_WM_WINDOW_FOCUS_OUT:
 			_reset_all_touch_inputs()
-			if state == GameState.PLAYING:
+			if state == GameState.PLAYING and not _is_capture_mode:
 				_on_pause_pressed()
 			if _audio != null and _audio.has_method("set_app_paused"):
 				_audio.set_app_paused(true)
@@ -595,6 +918,17 @@ func _update_safe_area() -> void:
 		_top_margin.add_theme_constant_override("margin_top", int(round(16.0 + top)))
 		_top_margin.offset_bottom = 84.0 + top
 
+	if _title_top_margin != null:
+		_title_top_margin.add_theme_constant_override("margin_left", int(round(20.0 + left)))
+		_title_top_margin.add_theme_constant_override("margin_right", int(round(20.0 + right)))
+		_title_top_margin.add_theme_constant_override("margin_top", int(round(16.0 + top)))
+		_title_top_margin.offset_bottom = 84.0 + top
+
+	if _title_stack != null:
+		_title_stack.offset_right = -right
+		_title_stack.offset_top = top
+		_title_stack.offset_bottom = -bottom
+
 	if _joystick != null:
 		_joystick.offset_left = 26.0 + left
 		_joystick.offset_right = 206.0 + left
@@ -602,16 +936,16 @@ func _update_safe_area() -> void:
 		_joystick.offset_bottom = -28.0 - bottom
 
 	if _spit_btn != null:
-		_spit_btn.offset_left = -220.0 - right
+		_spit_btn.offset_left = -218.0 - right
 		_spit_btn.offset_right = -130.0 - right
-		_spit_btn.offset_top = -124.0 - bottom
-		_spit_btn.offset_bottom = -34.0 - bottom
+		_spit_btn.offset_top = -128.0 - bottom
+		_spit_btn.offset_bottom = -32.0 - bottom
 
 	if _dash_btn != null:
-		_dash_btn.offset_left = -114.0 - right
+		_dash_btn.offset_left = -112.0 - right
 		_dash_btn.offset_right = -24.0 - right
-		_dash_btn.offset_top = -146.0 - bottom
-		_dash_btn.offset_bottom = -56.0 - bottom
+		_dash_btn.offset_top = -150.0 - bottom
+		_dash_btn.offset_bottom = -54.0 - bottom
 
 	if _banner_panel != null:
 		_banner_panel.offset_top = 76.0 + top
@@ -658,25 +992,7 @@ func _setup_background() -> void:
 	_bg_layer.layer = -10
 	add_child(_bg_layer)
 
-	# Half-resolution (0.5x) SubViewport cuts background fragment shading by 4x on mobile
-	# while bilinear upscaling makes the bioluminescent ambient backdrop silkier and dreamier.
-	_bg_viewport_container = SubViewportContainer.new()
-	_bg_viewport_container.name = "BgViewportContainer"
-	_bg_viewport_container.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_bg_viewport_container.stretch = true
-	_bg_viewport_container.stretch_shrink = 2
-	_bg_viewport_container.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	_bg_viewport_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_bg_layer.add_child(_bg_viewport_container)
-
-	_bg_viewport = SubViewport.new()
-	_bg_viewport.name = "BgSubViewport"
-	_bg_viewport.disable_3d = true
-	_bg_viewport.handle_input_locally = false
-	_bg_viewport.transparent_bg = false
-	_bg_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	_bg_viewport_container.add_child(_bg_viewport)
-
+	# Crisp full-resolution GPU backdrop attached directly inside BackgroundLayer (-10)
 	_bg_rect = ColorRect.new()
 	_bg_rect.name = "BiolumBg"
 	_bg_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -686,10 +1002,49 @@ func _setup_background() -> void:
 	if bg_shader != null:
 		_bg_mat.shader = bg_shader
 	_bg_rect.material = _bg_mat
-	_bg_viewport.add_child(_bg_rect)
+	_bg_layer.add_child(_bg_rect)
 
 
 func _setup_world() -> void:
+	# HDR WorldEnvironment: AgX (or Filmic on Godot 4.3) tonemapping + selective 3-level bloom on world layers <= 5
+	# (HUD on layer 10, Menus on layer 20, Cutscenes on layer 30 remain 100% razor-sharp)
+	var env: Environment = Environment.new()
+	env.background_mode = Environment.BG_CANVAS
+	env.background_canvas_max_layer = 5
+	if ClassDB.class_has_integer_constant(&"Environment", &"TONE_MAPPER_AGX"):
+		env.tonemap_mode = ClassDB.class_get_integer_constant(&"Environment", &"TONE_MAPPER_AGX") as Environment.ToneMapper
+	else:
+		env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.tonemap_exposure = 1.0
+	env.glow_enabled = true
+	env.glow_normalized = true
+	env.glow_hdr_threshold = 1.22
+	env.glow_intensity = 0.30
+	env.glow_strength = 0.72
+	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SCREEN
+	env.set_glow_level(0, 0.0)
+	env.set_glow_level(1, 0.55)
+	env.set_glow_level(2, 1.0)
+	env.set_glow_level(3, 0.48)
+	env.set_glow_level(4, 0.0)
+	env.set_glow_level(5, 0.0)
+	env.set_glow_level(6, 0.0)
+
+	_world_env = WorldEnvironment.new()
+	_world_env.name = "WorldEnvironment"
+	_world_env.environment = env
+	add_child(_world_env)
+
+	# Multi-plane atmospheric parallax depth (WorldAtmosphere) when available
+	if ResourceLoader.exists(WORLD_ATMOSPHERE_PATH):
+		var atmo_script: Script = load(WORLD_ATMOSPHERE_PATH) as Script
+		if atmo_script != null:
+			var atmo_inst: Object = atmo_script.new()
+			if atmo_inst is Node:
+				_atmosphere = atmo_inst as Node
+				_atmosphere.name = "WorldAtmosphere"
+				add_child(_atmosphere)
+
 	_ecosystem = Ecosystem.new()
 	_ecosystem.name = "Ecosystem"
 	add_child(_ecosystem)
@@ -698,6 +1053,9 @@ func _setup_world() -> void:
 	_vfx_layer.name = "WorldVfxLayer"
 	_vfx_layer.owner_main = self
 	_vfx_layer.z_index = 4
+	var vfx_mat: CanvasItemMaterial = CanvasItemMaterial.new()
+	vfx_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	_vfx_layer.material = vfx_mat
 	add_child(_vfx_layer)
 
 	_charlie = Charlie.new()
@@ -728,7 +1086,7 @@ func _setup_hud() -> void:
 	_hud_layer.layer = 10
 	add_child(_hud_layer)
 
-	# 1-pass GPU smooth radial crimson danger vignette behind HUD elements
+	# 1-pass GPU soft breathing dusk-ember edge vignette behind HUD elements
 	_danger_vignette = _DangerVignette.new()
 	_danger_vignette.name = "DangerVignette"
 	_hud_layer.add_child(_danger_vignette)
@@ -740,13 +1098,13 @@ func _setup_hud() -> void:
 		_hud_root.theme = _ui_theme
 	_hud_layer.add_child(_hud_root)
 
-	# Luminous touch target ring overlay for direct touch-anywhere steering
+	# Gossamer translucent water-ripple overlay for world-space direct-glide steering
 	_touch_target_overlay = _TouchTargetOverlay.new()
 	_touch_target_overlay.name = "TouchTargetOverlay"
 	_touch_target_overlay.glow_tex = _glow_tex
 	_hud_root.add_child(_touch_target_overlay)
 
-	# Ultra-minimal top-right container: discreet Mute & Pause circular buttons only
+	# Contemplative minimal top-right HUD: ONE whisper-quiet borderless Pause icon (0.36 alpha)
 	_top_margin = MarginContainer.new()
 	_top_margin.anchor_left = 0.0
 	_top_margin.anchor_top = 0.0
@@ -760,18 +1118,11 @@ func _setup_hud() -> void:
 	_hud_root.add_child(_top_margin)
 
 	var top_row: HBoxContainer = HBoxContainer.new()
-	top_row.add_theme_constant_override("separation", 10)
 	top_row.alignment = BoxContainer.ALIGNMENT_END
 	top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_top_margin.add_child(top_row)
 
-	_mute_btn = _make_hud_icon_button("sound_off" if audio_muted else "sound_on")
-	_mute_btn.modulate.a = 0.58
-	_mute_btn.pressed.connect(_on_toggle_mute)
-	top_row.add_child(_mute_btn)
-
-	_pause_btn = _make_hud_icon_button("pause")
-	_pause_btn.modulate.a = 0.58
+	_pause_btn = _make_borderless_icon_button("pause", 0.36)
 	_pause_btn.pressed.connect(_on_pause_pressed)
 	top_row.add_child(_pause_btn)
 
@@ -818,7 +1169,7 @@ func _setup_hud() -> void:
 	_banner_sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	banner_col.add_child(_banner_sub)
 
-	# Bottom-left VirtualJoystick (ultra-discreet at rest, fades smoothly on touch)
+	# Bottom-left VirtualJoystick (100% invisible at rest, appears smoothly on thumb touch)
 	_joystick = VirtualJoystick.new()
 	_joystick.name = "VirtualJoystick"
 	_joystick.anchor_left = 0.0
@@ -831,36 +1182,36 @@ func _setup_hud() -> void:
 	_joystick.offset_bottom = -28.0
 	_hud_root.add_child(_joystick)
 
-	# Bottom-right discreet multi-touch power buttons (clean vector icons, no text badges)
+	# Bottom-right borderless translucent liquid-glass teardrop power droplets
 	_spit_btn = _TouchPowerButton.new()
 	_spit_btn.name = "SpitButton"
 	_spit_btn.icon_kind = "flame"
-	_spit_btn.accent_color = Color(1.0, 0.54, 0.30, 1.0)
+	_spit_btn.accent_color = Color(1.0, 0.56, 0.32, 1.0)
 	_spit_btn.glow_tex = _glow_tex
 	_spit_btn.anchor_left = 1.0
 	_spit_btn.anchor_top = 1.0
 	_spit_btn.anchor_right = 1.0
 	_spit_btn.anchor_bottom = 1.0
-	_spit_btn.offset_left = -220.0
-	_spit_btn.offset_top = -124.0
+	_spit_btn.offset_left = -218.0
+	_spit_btn.offset_top = -128.0
 	_spit_btn.offset_right = -130.0
-	_spit_btn.offset_bottom = -34.0
+	_spit_btn.offset_bottom = -32.0
 	_spit_btn.activated.connect(_trigger_lava_spit)
 	_hud_root.add_child(_spit_btn)
 
 	_dash_btn = _TouchPowerButton.new()
 	_dash_btn.name = "DashButton"
 	_dash_btn.icon_kind = "shockwave"
-	_dash_btn.accent_color = Color(0.42, 0.92, 0.96, 1.0)
+	_dash_btn.accent_color = Color(0.46, 0.92, 0.98, 1.0)
 	_dash_btn.glow_tex = _glow_tex
 	_dash_btn.anchor_left = 1.0
 	_dash_btn.anchor_top = 1.0
 	_dash_btn.anchor_right = 1.0
 	_dash_btn.anchor_bottom = 1.0
-	_dash_btn.offset_left = -114.0
-	_dash_btn.offset_top = -146.0
+	_dash_btn.offset_left = -112.0
+	_dash_btn.offset_top = -150.0
 	_dash_btn.offset_right = -24.0
-	_dash_btn.offset_bottom = -56.0
+	_dash_btn.offset_bottom = -54.0
 	_dash_btn.activated.connect(_trigger_shockwave_dash)
 	_hud_root.add_child(_dash_btn)
 
@@ -880,48 +1231,129 @@ func _setup_menus() -> void:
 
 func _build_title_panel() -> void:
 	_title_panel = Control.new()
+	_title_panel.name = "TitlePanel"
 	_title_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	if _ui_theme != null:
 		_title_panel.theme = _ui_theme
 	_menu_layer.add_child(_title_panel)
 
-	# Ultra-light atmospheric scrim so live swimming Charlie + quantum world shine right through!
-	var scrim: ColorRect = ColorRect.new()
-	scrim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	scrim.color = Color(0.01, 0.04, 0.08, 0.12)
-	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_title_panel.add_child(scrim)
+	# Full-bleed living Ghibli keyart with gentle breathing zoom (clipped cleanly)
+	var art_clip: Control = Control.new()
+	art_clip.name = "TitleArtClip"
+	art_clip.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	art_clip.clip_contents = true
+	art_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_title_panel.add_child(art_clip)
 
-	var center: CenterContainer = CenterContainer.new()
-	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_title_panel.add_child(center)
+	_title_art_rect = TextureRect.new()
+	_title_art_rect.name = "TitleKeyArt"
+	_title_art_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_title_art_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_title_art_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_title_art_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if ResourceLoader.exists(TITLE_KEYART_PATH):
+		_title_art_rect.texture = load(TITLE_KEYART_PATH) as Texture2D
+	art_clip.add_child(_title_art_rect)
 
-	var card: PanelContainer = PanelContainer.new()
-	card.custom_minimum_size = Vector2(448.0, 0.0)
-	card.add_theme_stylebox_override("panel", _make_glass_box(26))
-	center.add_child(card)
+	# Whisper-light atmospheric night gradient on the right sky ONLY (leaves Charlie 100% open & bright!)
+	var right_grad_tex: GradientTexture2D = GradientTexture2D.new()
+	var rg: Gradient = Gradient.new()
+	rg.offsets = PackedFloat32Array([0.0, 0.35, 1.0])
+	rg.colors = PackedColorArray([
+		Color(0.015, 0.04, 0.08, 0.0),
+		Color(0.015, 0.04, 0.08, 0.22),
+		Color(0.015, 0.04, 0.08, 0.42),
+	])
+	right_grad_tex.gradient = rg
+	right_grad_tex.width = 64
+	right_grad_tex.height = 4
+	right_grad_tex.fill_from = Vector2(0.0, 0.5)
+	right_grad_tex.fill_to = Vector2(1.0, 0.5)
+
+	var sky_veil: TextureRect = TextureRect.new()
+	sky_veil.anchor_left = 0.36
+	sky_veil.anchor_top = 0.0
+	sky_veil.anchor_right = 1.0
+	sky_veil.anchor_bottom = 1.0
+	sky_veil.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	sky_veil.texture = right_grad_tex
+	sky_veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_title_panel.add_child(sky_veil)
+
+	# Live drifting golden firefly particles over the storybook painting
+	_title_fireflies = _TitleFireflies.new()
+	_title_fireflies.name = "TitleFireflies"
+	_title_fireflies.glow_tex = _glow_tex
+	_title_panel.add_child(_title_fireflies)
+
+	# Floating storybook typographic stack gracefully positioned over the open right-center sky
+	# (NO opaque dark modal card covering Charlie!)
+	_title_stack = Control.new()
+	_title_stack.name = "TitleTypoStack"
+	_title_stack.anchor_left = 0.50
+	_title_stack.anchor_top = 0.0
+	_title_stack.anchor_right = 0.94
+	_title_stack.anchor_bottom = 1.0
+	_title_stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_title_panel.add_child(_title_stack)
+
+	# Super-soft borderless radial dark mist glow behind the title stack (0.36 -> 0.0 alpha, zero visible edges)
+	var mist_grad: Gradient = Gradient.new()
+	mist_grad.offsets = PackedFloat32Array([0.0, 0.24, 0.46, 0.68, 0.86, 1.0])
+	mist_grad.colors = PackedColorArray([
+		Color(0.0, 0.0, 0.0, 0.36),
+		Color(0.0, 0.0, 0.0, 0.31),
+		Color(0.0, 0.0, 0.0, 0.21),
+		Color(0.0, 0.0, 0.0, 0.10),
+		Color(0.0, 0.0, 0.0, 0.025),
+		Color(0.0, 0.0, 0.0, 0.0),
+	])
+	var mist_tex: GradientTexture2D = GradientTexture2D.new()
+	mist_tex.width = 128
+	mist_tex.height = 128
+	mist_tex.fill = GradientTexture2D.FILL_RADIAL
+	mist_tex.fill_from = Vector2(0.5, 0.5)
+	mist_tex.fill_to = Vector2(1.0, 0.5)
+	mist_tex.gradient = mist_grad
+
+	var title_mist: TextureRect = TextureRect.new()
+	title_mist.name = "TitleMistGlow"
+	title_mist.anchor_left = -0.20
+	title_mist.anchor_top = 0.12
+	title_mist.anchor_right = 1.20
+	title_mist.anchor_bottom = 0.86
+	title_mist.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	title_mist.stretch_mode = TextureRect.STRETCH_SCALE
+	title_mist.texture = mist_tex
+	title_mist.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_title_stack.add_child(title_mist)
+
+	var stack_center: CenterContainer = CenterContainer.new()
+	stack_center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	stack_center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_title_stack.add_child(stack_center)
 
 	var col: VBoxContainer = VBoxContainer.new()
-	col.add_theme_constant_override("separation", 16)
-	card.add_child(col)
-
-	var header_col: VBoxContainer = VBoxContainer.new()
-	header_col.add_theme_constant_override("separation", 4)
-	header_col.alignment = BoxContainer.ALIGNMENT_CENTER
-	col.add_child(header_col)
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.add_theme_constant_override("separation", 10)
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	stack_center.add_child(col)
 
 	var title_lbl: Label = Label.new()
 	title_lbl.text = "CHARLIE"
 	title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	if _font_display != null:
 		title_lbl.add_theme_font_override("font", _font_display)
-	title_lbl.add_theme_font_size_override("font_size", 56)
-	title_lbl.add_theme_color_override("font_color", Color("#fff5df"))
-	title_lbl.add_theme_color_override("font_shadow_color", Color(1.0, 0.44, 0.28, 0.48))
+	title_lbl.add_theme_font_size_override("font_size", 64)
+	title_lbl.add_theme_color_override("font_color", Color("#fff6e5"))
+	title_lbl.add_theme_color_override("font_shadow_color", Color(0.18, 0.06, 0.04, 0.65))
 	title_lbl.add_theme_constant_override("shadow_offset_x", 0)
-	title_lbl.add_theme_constant_override("shadow_offset_y", 4)
-	title_lbl.add_theme_constant_override("shadow_outline_size", 14)
-	header_col.add_child(title_lbl)
+	title_lbl.add_theme_constant_override("shadow_offset_y", 3)
+	title_lbl.add_theme_constant_override("shadow_outline_size", 4)
+	title_lbl.add_theme_color_override("font_outline_color", Color(0.18, 0.06, 0.04, 0.18))
+	title_lbl.add_theme_constant_override("outline_size", 1)
+	title_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(title_lbl)
 
 	var sub_lbl: Label = Label.new()
 	sub_lbl.text = "DE L'ATOME AU COSMOS"
@@ -932,26 +1364,77 @@ func _build_title_panel() -> void:
 		sub_lbl.add_theme_font_override("font", _font_ui_bold)
 	sub_lbl.add_theme_font_size_override("font_size", 14)
 	sub_lbl.add_theme_color_override("font_color", Color("#ffd166"))
-	sub_lbl.add_theme_color_override("font_shadow_color", Color(0.0, 0.03, 0.07, 0.65))
+	sub_lbl.add_theme_color_override("font_shadow_color", Color(0.02, 0.04, 0.10, 0.82))
 	sub_lbl.add_theme_constant_override("shadow_offset_y", 2)
-	sub_lbl.add_theme_constant_override("shadow_outline_size", 4)
-	header_col.add_child(sub_lbl)
+	sub_lbl.add_theme_constant_override("shadow_outline_size", 6)
+	sub_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(sub_lbl)
 
-	var desc_lbl: Label = Label.new()
-	desc_lbl.text = "Guide la petite Charlie, une goutte de lave aux deux petites dents, à travers 6 mondes bioluminescents."
-	desc_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	desc_lbl.add_theme_font_size_override("font_size", 15)
-	desc_lbl.add_theme_color_override("font_color", Color(0.90, 0.94, 0.98, 0.88))
-	col.add_child(desc_lbl)
+	var cta_spacer: Control = Control.new()
+	cta_spacer.custom_minimum_size = Vector2(0.0, 18.0)
+	cta_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(cta_spacer)
 
-	var play_btn: Button = _make_menu_button("Plonger", true)
+	var cta_wrap: CenterContainer = CenterContainer.new()
+	cta_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(cta_wrap)
+
+	var play_btn: Button = _make_title_cta_button("Plonger")
 	play_btn.pressed.connect(_on_start_game)
-	col.add_child(play_btn)
+	cta_wrap.add_child(play_btn)
 
-	var opt_btn: Button = _make_menu_button("Options", false)
-	opt_btn.pressed.connect(func() -> void: _open_options(GameState.TITLE))
-	col.add_child(opt_btn)
+	var chip_spacer: Control = Control.new()
+	chip_spacer.custom_minimum_size = Vector2(0.0, 10.0)
+	chip_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(chip_spacer)
+
+	# Subtle floating borderless difficulty chips underneath Plonger
+	var chips_wrap: CenterContainer = CenterContainer.new()
+	chips_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(chips_wrap)
+
+	var chips_row: HBoxContainer = HBoxContainer.new()
+	chips_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	chips_row.add_theme_constant_override("separation", 8)
+	chips_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	chips_wrap.add_child(chips_row)
+
+	_title_diff_buttons.clear()
+	for mode_key: String in ["toddler", "chill", "wild"]:
+		var preset: Dictionary = Scales.DIFFICULTY_PRESETS[mode_key] as Dictionary
+		var chip: Button = Button.new()
+		chip.text = String(preset["label"])
+		chip.custom_minimum_size = Vector2(0.0, 34.0)
+		if _font_ui != null:
+			chip.add_theme_font_override("font", _font_ui)
+		chip.add_theme_font_size_override("font_size", 13)
+		chip.pressed.connect(func() -> void: _set_difficulty_option(mode_key))
+		chips_row.add_child(chip)
+		_title_diff_buttons[mode_key] = chip
+
+	# Minimal top-right gear icon (Options) respecting safe-area insets
+	_title_top_margin = MarginContainer.new()
+	_title_top_margin.name = "TitleTopMargin"
+	_title_top_margin.anchor_left = 0.0
+	_title_top_margin.anchor_top = 0.0
+	_title_top_margin.anchor_right = 1.0
+	_title_top_margin.anchor_bottom = 0.0
+	_title_top_margin.offset_bottom = 84.0
+	_title_top_margin.add_theme_constant_override("margin_left", 20)
+	_title_top_margin.add_theme_constant_override("margin_right", 20)
+	_title_top_margin.add_theme_constant_override("margin_top", 16)
+	_title_top_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_title_panel.add_child(_title_top_margin)
+
+	var title_top_row: HBoxContainer = HBoxContainer.new()
+	title_top_row.alignment = BoxContainer.ALIGNMENT_END
+	title_top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_title_top_margin.add_child(title_top_row)
+
+	_title_options_btn = _make_borderless_icon_button("gear", 0.68)
+	_title_options_btn.tooltip_text = "Options"
+	_title_options_btn.pressed.connect(func() -> void: _open_options(GameState.TITLE))
+	title_top_row.add_child(_title_options_btn)
 
 
 func _build_pause_panel() -> void:
@@ -971,6 +1454,10 @@ func _build_pause_panel() -> void:
 	var resume_btn: Button = _make_menu_button("Reprendre", true)
 	resume_btn.pressed.connect(_resume_game)
 	col.add_child(resume_btn)
+
+	_pause_mute_btn = _make_menu_button("Son : Coupé" if audio_muted else "Son : Activé", false)
+	_pause_mute_btn.pressed.connect(_on_toggle_mute)
+	col.add_child(_pause_mute_btn)
 
 	var opt_btn: Button = _make_menu_button("Options", false)
 	opt_btn.pressed.connect(func() -> void: _open_options(GameState.PAUSED))
@@ -1057,6 +1544,14 @@ func _build_options_panel() -> void:
 	_bites_slider.value = float(bites_per_scale)
 	_bites_slider.value_changed.connect(_on_bites_slider_changed)
 	col.add_child(_bites_slider)
+
+	# Audio toggle (lives cleanly in Options & Pause instead of cluttering the HUD)
+	_audio_toggle = CheckButton.new()
+	_audio_toggle.text = "Son et musique"
+	_audio_toggle.button_pressed = not audio_muted
+	_audio_toggle.add_theme_font_size_override("font_size", 15)
+	_audio_toggle.toggled.connect(_on_audio_toggled)
+	col.add_child(_audio_toggle)
 
 	# Cinematic mode toggle
 	_cinematic_toggle = CheckButton.new()
@@ -1195,21 +1690,63 @@ func _make_glass_box(radius: int) -> StyleBoxFlat:
 	return box
 
 
-func _make_hud_icon_button(icon_id: String) -> _IconButton:
+func _make_borderless_icon_button(icon_id: String, idle_alpha: float) -> _IconButton:
 	var b: _IconButton = _IconButton.new()
 	b.text = ""
 	b.icon_name = icon_id
 	b.custom_minimum_size = Vector2(44.0, 44.0)
-	var st: StyleBoxFlat = StyleBoxFlat.new()
-	st.bg_color = Color(0.04, 0.10, 0.17, 0.66)
-	st.border_color = Color(1.0, 1.0, 1.0, 0.18)
-	st.set_border_width_all(1)
-	st.set_corner_radius_all(22)
-	b.add_theme_stylebox_override("normal", st)
-	var hover: StyleBoxFlat = st.duplicate() as StyleBoxFlat
-	hover.bg_color = Color(0.10, 0.21, 0.31, 0.86)
+	b.modulate.a = idle_alpha
+	b.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
+	var hover: StyleBoxFlat = StyleBoxFlat.new()
+	hover.bg_color = Color(1.0, 0.96, 0.90, 0.14)
+	hover.set_corner_radius_all(22)
 	b.add_theme_stylebox_override("hover", hover)
-	b.add_theme_stylebox_override("pressed", hover)
+	var pressed: StyleBoxFlat = StyleBoxFlat.new()
+	pressed.bg_color = Color(1.0, 0.96, 0.90, 0.24)
+	pressed.set_corner_radius_all(22)
+	b.add_theme_stylebox_override("pressed", pressed)
+	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	return b
+
+
+func _make_title_cta_button(label_txt: String) -> Button:
+	var b: Button = Button.new()
+	b.text = label_txt
+	b.custom_minimum_size = Vector2(264.0, 66.0)
+	if _font_ui_bold != null:
+		b.add_theme_font_override("font", _font_ui_bold)
+	b.add_theme_font_size_override("font_size", 20)
+	var ink: Color = Color("#141012")
+	b.add_theme_color_override("font_color", ink)
+	b.add_theme_color_override("font_hover_color", ink)
+	b.add_theme_color_override("font_pressed_color", ink)
+	b.add_theme_color_override("font_focus_color", ink)
+
+	if _cta_pill_normal != null:
+		var st_n: StyleBoxTexture = StyleBoxTexture.new()
+		st_n.texture = _cta_pill_normal
+		st_n.content_margin_left = 28.0
+		st_n.content_margin_right = 28.0
+		st_n.content_margin_top = 12.0
+		st_n.content_margin_bottom = 12.0
+		b.add_theme_stylebox_override("normal", st_n)
+
+		var st_h: StyleBoxTexture = st_n.duplicate() as StyleBoxTexture
+		st_h.texture = _cta_pill_hover
+		b.add_theme_stylebox_override("hover", st_h)
+
+		var st_p: StyleBoxTexture = st_n.duplicate() as StyleBoxTexture
+		st_p.texture = _cta_pill_pressed
+		b.add_theme_stylebox_override("pressed", st_p)
+	else:
+		var fallback: StyleBoxFlat = StyleBoxFlat.new()
+		fallback.bg_color = Color("#ff8364")
+		fallback.set_corner_radius_all(30)
+		fallback.shadow_color = Color(1.0, 0.46, 0.34, 0.48)
+		fallback.shadow_size = 18
+		b.add_theme_stylebox_override("normal", fallback)
+		b.add_theme_stylebox_override("hover", fallback)
+		b.add_theme_stylebox_override("pressed", fallback)
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	return b
 
@@ -1223,13 +1760,13 @@ func _make_menu_button(label_txt: String, is_primary: bool) -> Button:
 	b.add_theme_font_size_override("font_size", 17)
 	var st: StyleBoxFlat = StyleBoxFlat.new()
 	if is_primary:
-		# Warm glowing coral-orange CTA with high-contrast dark ink (#10161b)
+		# Warm glowing coral-orange CTA with high-contrast dark ink (#141012)
 		st.bg_color = Color("#ff8364")
 		st.border_color = Color(1.0, 0.84, 0.66, 0.62)
 		st.shadow_color = Color(1.0, 0.44, 0.34, 0.36)
 		st.shadow_size = 14
 		st.shadow_offset = Vector2(0.0, 4.0)
-		var dark_ink: Color = Color("#10161b")
+		var dark_ink: Color = Color("#141012")
 		b.add_theme_color_override("font_color", dark_ink)
 		b.add_theme_color_override("font_hover_color", dark_ink)
 		b.add_theme_color_override("font_pressed_color", dark_ink)
@@ -1341,10 +1878,45 @@ func _apply_settings_to_systems() -> void:
 	if _ecosystem != null:
 		_ecosystem.set_difficulty(difficulty_mode)
 	if _audio != null:
-		_audio.set_muted(audio_muted)
-	if _mute_btn != null:
-		_mute_btn.set_icon_name("sound_off" if audio_muted else "sound_on")
+		_audio.set_muted(audio_muted or _is_capture_mode)
+	if _pause_mute_btn != null:
+		_pause_mute_btn.text = "Son : Coupé" if audio_muted else "Son : Activé"
 	_refresh_options_ui()
+
+
+func _apply_title_difficulty_chip_style(btn: Button, selected: bool) -> void:
+	# Translucent borderless floating chip on the Ghibli title screen
+	var st: StyleBoxFlat = StyleBoxFlat.new()
+	st.set_corner_radius_all(18)
+	st.set_border_width_all(0)
+	st.content_margin_left = 15.0
+	st.content_margin_right = 15.0
+	st.content_margin_top = 6.0
+	st.content_margin_bottom = 6.0
+	if selected:
+		st.bg_color = Color(1.0, 0.62, 0.38, 0.34)
+		st.shadow_color = Color(1.0, 0.64, 0.34, 0.28)
+		st.shadow_size = 10
+		st.shadow_offset = Vector2(0.0, 2.0)
+		var active_ink: Color = Color("#fff6e5")
+		btn.add_theme_color_override("font_color", active_ink)
+		btn.add_theme_color_override("font_hover_color", active_ink)
+		btn.add_theme_color_override("font_pressed_color", active_ink)
+		btn.add_theme_color_override("font_focus_color", active_ink)
+	else:
+		st.bg_color = Color(0.04, 0.08, 0.14, 0.38)
+		btn.add_theme_color_override("font_color", Color(0.88, 0.90, 0.92, 0.72))
+		btn.add_theme_color_override("font_hover_color", Color(1.0, 0.96, 0.88, 0.96))
+		btn.add_theme_color_override("font_pressed_color", Color(1.0, 0.96, 0.88, 0.96))
+		btn.add_theme_color_override("font_focus_color", Color(0.88, 0.90, 0.92, 0.72))
+	btn.add_theme_stylebox_override("normal", st)
+	var hover: StyleBoxFlat = st.duplicate() as StyleBoxFlat
+	hover.bg_color = Color(1.0, 0.66, 0.42, 0.44) if selected else Color(0.08, 0.14, 0.22, 0.54)
+	btn.add_theme_stylebox_override("hover", hover)
+	var pressed: StyleBoxFlat = st.duplicate() as StyleBoxFlat
+	pressed.bg_color = Color(0.98, 0.56, 0.34, 0.48) if selected else Color(0.06, 0.12, 0.20, 0.62)
+	btn.add_theme_stylebox_override("pressed", pressed)
+	btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 
 
 func _apply_difficulty_pill_style(btn: Button, selected: bool) -> void:
@@ -1382,6 +1954,10 @@ func _apply_difficulty_pill_style(btn: Button, selected: bool) -> void:
 
 
 func _refresh_options_ui() -> void:
+	for mode_key: String in _title_diff_buttons.keys():
+		var chip: Button = _title_diff_buttons[mode_key] as Button
+		_apply_title_difficulty_chip_style(chip, mode_key == difficulty_mode)
+
 	if _diff_desc_label == null:
 		return
 	var preset: Dictionary = Scales.DIFFICULTY_PRESETS[difficulty_mode] as Dictionary
@@ -1394,6 +1970,10 @@ func _refresh_options_ui() -> void:
 		_bites_slider.set_value_no_signal(float(bites_per_scale))
 	if _bites_value_label != null:
 		_bites_value_label.text = str(bites_per_scale)
+	if _audio_toggle != null:
+		_audio_toggle.set_pressed_no_signal(not audio_muted)
+	if _pause_mute_btn != null:
+		_pause_mute_btn.text = "Son : Coupé" if audio_muted else "Son : Activé"
 	if _cinematic_toggle != null:
 		_cinematic_toggle.set_pressed_no_signal(cinematic_mode)
 	if _haptics_toggle != null:
@@ -1414,6 +1994,17 @@ func _on_bites_slider_changed(val: float) -> void:
 	bites_per_scale = clampi(roundi(val), 3, 50)
 	if _bites_value_label != null:
 		_bites_value_label.text = str(bites_per_scale)
+	save_settings()
+
+
+func _on_audio_toggled(enabled: bool) -> void:
+	audio_muted = not enabled
+	if _audio != null:
+		_audio.set_muted(audio_muted or _is_capture_mode)
+		if enabled and not _is_capture_mode:
+			_audio.play_chime(1.15)
+	if _pause_mute_btn != null:
+		_pause_mute_btn.text = "Son : Coupé" if audio_muted else "Son : Activé"
 	save_settings()
 
 
@@ -1612,6 +2203,8 @@ func _on_pause_pressed() -> void:
 	_reset_all_touch_inputs()
 	_hide_all_overlays()
 	_refresh_stats_labels()
+	if _pause_mute_btn != null:
+		_pause_mute_btn.text = "Son : Coupé" if audio_muted else "Son : Activé"
 	_show_overlay(_pause_panel)
 	_set_audio_ducked(true)
 	if _audio != null:
@@ -1644,8 +2237,10 @@ func _on_toggle_mute() -> void:
 	if _audio == null:
 		return
 	audio_muted = _audio.toggle_mute()
-	if _mute_btn != null:
-		_mute_btn.set_icon_name("sound_off" if audio_muted else "sound_on")
+	if _pause_mute_btn != null:
+		_pause_mute_btn.text = "Son : Coupé" if audio_muted else "Son : Activé"
+	if _audio_toggle != null:
+		_audio_toggle.set_pressed_no_signal(not audio_muted)
 	save_settings()
 
 
@@ -1672,6 +2267,8 @@ func _reset_world_to_scale(scale_idx: int) -> void:
 
 	var start_size: float = Scales.scale_start_size(current_scale_index)
 	_charlie.reset_charlie(Vector2.ZERO, start_size)
+	if _charlie.has_method("set_regen_progress"):
+		_charlie.call("set_regen_progress", 0.0)
 	_ecosystem.set_difficulty(difficulty_mode)
 	_ecosystem.reset_for_scale(_charlie, current_scale_index)
 	if _audio != null:
@@ -1684,6 +2281,10 @@ func _reset_world_to_scale(scale_idx: int) -> void:
 	_camera.zoom = Vector2(_current_zoom, _current_zoom)
 	if _danger_vignette != null:
 		_danger_vignette.set_intensity(0.0)
+	if _spit_btn != null:
+		_spit_btn.set_context_visibility(_TouchPowerButton.PEACEFUL_ALPHA)
+	if _dash_btn != null:
+		_dash_btn.set_context_visibility(_TouchPowerButton.PEACEFUL_ALPHA)
 	_invalidate_hud_cache()
 	_update_hud()
 
@@ -1727,13 +2328,16 @@ func _find_auto_aim_angle() -> float:
 
 
 func _trigger_lava_spit() -> void:
+	_trigger_lava_spit_at(_find_auto_aim_angle())
+
+
+func _trigger_lava_spit_at(base_angle: float) -> void:
 	if state != GameState.PLAYING or _spit_cd_left > 0.0:
 		return
 	var preset: Dictionary = Scales.DIFFICULTY_PRESETS[difficulty_mode] as Dictionary
 	_spit_cd_left = float(preset.get("spit_cd", 2.4))
 
 	var lvl: int = _get_power_level()
-	var base_angle: float = _find_auto_aim_angle()
 	_charlie.facing_angle = base_angle
 	var speed: float = _charlie.world_size * (12.5 + float(lvl) * 1.6)
 	var angles: Array[float] = [base_angle]
@@ -1761,13 +2365,17 @@ func _trigger_lava_spit() -> void:
 
 
 func _trigger_shockwave_dash() -> void:
+	var input_dir: Vector2 = _read_move_input()
+	var dash_angle: float = input_dir.angle() if input_dir.length_squared() > 0.04 else _charlie.facing_angle
+	_trigger_shockwave_dash_at(dash_angle)
+
+
+func _trigger_shockwave_dash_at(dash_angle: float) -> void:
 	if state != GameState.PLAYING or _dash_cd_left > 0.0:
 		return
 	var lvl: int = _get_power_level()
 	_dash_cd_left = _get_dash_cooldown()
 
-	var input_dir: Vector2 = _read_move_input()
-	var dash_angle: float = input_dir.angle() if input_dir.length_squared() > 0.04 else _charlie.facing_angle
 	_charlie.trigger_dash(dash_angle, lvl)
 	_charlie.invuln_timer = maxf(_charlie.invuln_timer, 0.26 + float(lvl) * 0.06)
 
@@ -1806,34 +2414,90 @@ func _trigger_shockwave_dash() -> void:
 # --- Input & Main Loop ---
 
 func _is_point_on_top_hud_button(pos: Vector2) -> bool:
-	if _mute_btn != null and _mute_btn.is_visible_in_tree() and _mute_btn.get_global_rect().grow(10.0).has_point(pos):
-		return true
 	if _pause_btn != null and _pause_btn.is_visible_in_tree() and _pause_btn.get_global_rect().grow(10.0).has_point(pos):
 		return true
 	return false
 
 
+func _screen_to_world(screen_pos: Vector2) -> Vector2:
+	var xf: Transform2D = get_canvas_transform()
+	if absf(xf.determinant()) > 0.0000001:
+		return xf.affine_inverse() * screen_pos
+	if _camera != null:
+		var vp_size: Vector2 = get_viewport().get_visible_rect().size
+		var zx: float = maxf(_camera.zoom.x, 0.0001)
+		var zy: float = maxf(_camera.zoom.y, 0.0001)
+		var delta_px: Vector2 = screen_pos - vp_size * 0.5
+		return _camera.get_screen_center_position() + Vector2(delta_px.x / zx, delta_px.y / zy)
+	return screen_pos
+
+
+func _find_predator_near_world_point(world_pos: Vector2) -> Creature:
+	if _ecosystem == null or _charlie == null:
+		return null
+	var min_pred_size: float = _charlie.world_size * 0.94
+	var best_pred: Creature = null
+	var best_dist: float = INF
+	var creatures: Array[Creature] = _ecosystem.get_creatures()
+	for c: Creature in creatures:
+		if not is_instance_valid(c) or not c.alive:
+			continue
+		if c.world_size < min_pred_size:
+			continue
+		var tap_radius: float = maxf(c.world_size * 2.3, _charlie.world_size * 2.6)
+		var d: float = world_pos.distance_to(c.position)
+		if d <= tap_radius and d < best_dist:
+			best_dist = d
+			best_pred = c
+	return best_pred
+
+
 func _unhandled_input(event: InputEvent) -> void:
-	# Direct touch-anywhere steering on playfield (events already handled by VirtualJoystick / power buttons won't arrive here)
+	# World-space direct-glide touch steering + one-handed tap gestures
+	# (events handled by VirtualJoystick or liquid-glass power droplets never arrive here)
 	if event is InputEventScreenTouch:
 		var tev: InputEventScreenTouch = event as InputEventScreenTouch
 		if tev.pressed:
 			if state == GameState.PLAYING and _direct_touch_index == -1 and not _is_point_on_top_hud_button(tev.position):
 				_direct_touch_index = tev.index
 				_direct_touch_pos = tev.position
+				_direct_touch_start_pos = tev.position
+				_direct_touch_start_time = _vfx_time
+				_direct_touch_max_move = 0.0
 				if _touch_target_overlay != null:
 					_touch_target_overlay.set_target(_direct_touch_pos, true)
 		else:
 			if tev.index == _direct_touch_index:
+				var elapsed: float = _vfx_time - _direct_touch_start_time
+				var total_move: float = maxf(_direct_touch_max_move, tev.position.distance_to(_direct_touch_start_pos))
 				_direct_touch_index = -1
 				if _touch_target_overlay != null:
 					_touch_target_overlay.release()
+
+				if state == GameState.PLAYING and elapsed < QUICK_TAP_MAX_TIME and total_move < QUICK_TAP_MAX_MOVE:
+					var world_tap: Vector2 = _screen_to_world(tev.position)
+					var tapped_pred: Creature = _find_predator_near_world_point(world_tap)
+					if tapped_pred != null:
+						_last_open_tap_time = -10.0
+						_trigger_lava_spit_at((tapped_pred.position - _charlie.position).angle())
+					else:
+						var dt_tap: float = _vfx_time - _last_open_tap_time
+						var d_tap: float = tev.position.distance_to(_last_open_tap_pos)
+						if dt_tap <= DOUBLE_TAP_MAX_INTERVAL and d_tap <= DOUBLE_TAP_MAX_DIST:
+							_last_open_tap_time = -10.0
+							var to_tap: Vector2 = world_tap - _charlie.position
+							var dash_ang: float = to_tap.angle() if to_tap.length() > _charlie.world_size * 0.4 else _charlie.facing_angle
+							_trigger_shockwave_dash_at(dash_ang)
+						else:
+							_last_open_tap_time = _vfx_time
+							_last_open_tap_pos = tev.position
 		return
 
 	if event is InputEventScreenDrag:
 		var dev: InputEventScreenDrag = event as InputEventScreenDrag
 		if state == GameState.PLAYING and dev.index == _direct_touch_index:
 			_direct_touch_pos = dev.position
+			_direct_touch_max_move = maxf(_direct_touch_max_move, dev.position.distance_to(_direct_touch_start_pos))
 			if _touch_target_overlay != null:
 				_touch_target_overlay.set_target(_direct_touch_pos, true)
 		return
@@ -1875,20 +2539,25 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _read_move_input() -> Vector2:
+	if _is_capture_mode and _capture_steer_override.length_squared() > 0.0001:
+		return _capture_steer_override
+
 	var vec: Vector2 = Vector2.ZERO
 	if _joystick != null and _joystick.is_active:
 		vec = _joystick.output_vector
 	elif _direct_touch_index != -1:
-		var screen_center: Vector2 = get_viewport().get_visible_rect().size * 0.5
-		var delta_px: Vector2 = _direct_touch_pos - screen_center
-		var dist_px: float = delta_px.length()
-		if dist_px > DIRECT_TOUCH_DEADZONE:
+		var world_target: Vector2 = _screen_to_world(_direct_touch_pos)
+		var delta_w: Vector2 = world_target - _charlie.position
+		var dist_w: float = delta_w.length()
+		var deadzone_w: float = _charlie.world_size * 0.45
+		var full_r_w: float = _charlie.world_size * 3.6
+		if dist_w > deadzone_w:
 			var strength: float = clampf(
-				(dist_px - DIRECT_TOUCH_DEADZONE) / maxf(DIRECT_TOUCH_FULL_RADIUS - DIRECT_TOUCH_DEADZONE, 1.0),
+				(dist_w - deadzone_w) / maxf(full_r_w - deadzone_w, 0.001),
 				0.0,
 				1.0
 			)
-			vec = (delta_px / dist_px) * strength
+			vec = (delta_w / dist_w) * strength
 	else:
 		var kb: Vector2 = Vector2.ZERO
 		if Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D):
@@ -1907,6 +2576,7 @@ func _read_move_input() -> Vector2:
 func _process(delta: float) -> void:
 	var dt: float = clampf(delta, 0.0, 0.05)
 	_vfx_time += dt
+	_play_time += dt
 	var progress: float = Scales.size_to_progress(_charlie.world_size)
 	var palette: Dictionary = Scales.get_blended_palette(progress)
 
@@ -1920,11 +2590,23 @@ func _process(delta: float) -> void:
 
 	_step_banners(dt)
 	_update_background_shader(palette, progress)
+	if _atmosphere != null and _atmosphere.has_method("update_atmosphere"):
+		_atmosphere.call("update_atmosphere", dt, _bg_parallax, progress, palette, get_viewport().get_visible_rect().size)
+	_update_global_shader_uniforms(palette)
 
 
 func _step_title_swim(dt: float, palette: Dictionary) -> void:
-	# Gentle figure-8 swim offset around the title card so Charlie stays lively & visible
+	# Subtle alive breathing zoom & drift on the full-bleed Ghibli title painting
 	_title_swim_time += dt
+	if _title_art_rect != null and _title_art_rect.is_visible_in_tree():
+		_title_art_rect.pivot_offset = _title_art_rect.size * 0.5
+		var breath_zoom: float = 1.045 + 0.022 * sin(_title_swim_time * 0.38)
+		var pan_x: float = sin(_title_swim_time * 0.23) * 5.0
+		var pan_y: float = cos(_title_swim_time * 0.19) * 3.5
+		_title_art_rect.scale = Vector2(breath_zoom, breath_zoom)
+		_title_art_rect.position = Vector2(pan_x, pan_y)
+
+	# Keep Charlie gently swimming behind the scene so entering gameplay is instant & fluid
 	var t: float = _title_swim_time * 0.58
 	var rx: float = _charlie.world_size * 7.8
 	var ry: float = _charlie.world_size * 4.4
@@ -1938,7 +2620,6 @@ func _step_title_swim(dt: float, palette: Dictionary) -> void:
 		_vfx_layer.queue_redraw()
 		_vfx_was_active = false
 
-	# Keep camera gently drifting near origin so Charlie loops into clear view around the card
 	var desired_cam: Vector2 = _charlie.position * 0.18
 	_camera_base_pos = _camera_base_pos.lerp(desired_cam, 1.0 - exp(-dt * 2.0))
 	var cam_delta: Vector2 = _camera_base_pos - _last_cam_pos
@@ -1957,13 +2638,21 @@ func _step_playing(dt: float, palette: Dictionary) -> void:
 		if _combo_timer <= 0.0:
 			_combo_count = 0
 
-	# Passive droplet regeneration after 8.0s without taking damage
+	# Passive & bite-based droplet regeneration with live diegetic progress feedback
+	var regen_progress: float = 0.0
 	if _charlie.droplets_alive < Charlie.MAX_DROPLETS:
 		_time_since_hurt += dt
 		if _time_since_hurt >= PASSIVE_HEAL_SECONDS:
 			_heal_one_droplet()
+		else:
+			var time_prog: float = clampf(_time_since_hurt / PASSIVE_HEAL_SECONDS, 0.0, 1.0)
+			var bite_prog: float = clampf(float(_heal_bite_counter) / 5.0, 0.0, 1.0)
+			regen_progress = maxf(time_prog, bite_prog)
 	else:
 		_time_since_hurt = 0.0
+		regen_progress = 0.0
+	if _charlie.has_method("set_regen_progress"):
+		_charlie.call("set_regen_progress", regen_progress)
 
 	var move_dir: Vector2 = _read_move_input()
 	var has_input: bool = move_dir.length_squared() > 0.0025
@@ -1984,7 +2673,7 @@ func _step_playing(dt: float, palette: Dictionary) -> void:
 	if state != GameState.PLAYING:
 		return
 
-	# Danger vignette & predator pulse audio
+	# Danger vignette, predator pulse audio & contextual liquid-glass power droplet awakening
 	_step_danger_feedback(dt, predator_chasing, nearest_pred)
 
 	# Smooth logarithmic Camera2D zoom, velocity look-ahead, trauma shake, & jump-free parallax
@@ -2029,6 +2718,22 @@ func _step_playing(dt: float, palette: Dictionary) -> void:
 
 
 func _step_danger_feedback(dt: float, predator_chasing: bool, nearest_pred: Variant) -> void:
+	# Contextual power droplet awakening: 0.24 peaceful -> 0.82 as a predator approaches
+	var power_alert: float = 0.0
+	if difficulty_mode != "toddler":
+		if predator_chasing:
+			power_alert = 1.0
+		elif nearest_pred is Creature and is_instance_valid(nearest_pred):
+			var pred_near: Creature = nearest_pred as Creature
+			var dist_p: float = _charlie.position.distance_to(pred_near.position)
+			var sense_r: float = maxf(_charlie.world_size * 8.2, pred_near.world_size * 5.8)
+			power_alert = clampf(1.0 - dist_p / maxf(sense_r, 1.0), 0.0, 1.0)
+	var droplet_vis: float = lerpf(_TouchPowerButton.PEACEFUL_ALPHA, _TouchPowerButton.ALERT_ALPHA, power_alert)
+	if _spit_btn != null:
+		_spit_btn.set_context_visibility(droplet_vis)
+	if _dash_btn != null:
+		_dash_btn.set_context_visibility(droplet_vis)
+
 	if _danger_vignette == null:
 		return
 	if difficulty_mode == "toddler":
@@ -2037,8 +2742,8 @@ func _step_danger_feedback(dt: float, predator_chasing: bool, nearest_pred: Vari
 
 	var target_danger: float = 0.0
 	if _charlie.droplets_alive <= 0:
-		# Critical 0-droplet state: pulsing crimson edge warning
-		target_danger = 0.46 + 0.34 * (0.5 + 0.5 * sin(_vfx_time * 6.5))
+		# Critical 0-droplet state: gentle breathing dusk-ember edge warmth
+		target_danger = 0.48 + 0.30 * (0.5 + 0.5 * sin(_vfx_time * 4.5))
 
 	if predator_chasing:
 		var prox: float = 0.45
@@ -2047,7 +2752,7 @@ func _step_danger_feedback(dt: float, predator_chasing: bool, nearest_pred: Vari
 			var d: float = _charlie.position.distance_to(pred_c.position)
 			var danger_r: float = maxf(_charlie.world_size * 6.4, pred_c.world_size * 4.6)
 			prox = clampf(1.0 - d / maxf(danger_r, 1.0), 0.15, 1.0)
-		var chase_glow: float = (0.16 + 0.40 * prox) * (0.65 + 0.35 * sin(_vfx_time * 8.0))
+		var chase_glow: float = (0.18 + 0.42 * prox) * (0.72 + 0.28 * sin(_vfx_time * 5.2))
 		target_danger = maxf(target_danger, chase_glow)
 
 		_predator_pulse_timer -= dt
@@ -2058,7 +2763,7 @@ func _step_danger_feedback(dt: float, predator_chasing: bool, nearest_pred: Vari
 	else:
 		_predator_pulse_timer = maxf(0.0, _predator_pulse_timer - dt)
 
-	var next_val: float = lerpf(_danger_vignette.intensity, target_danger, 1.0 - exp(-dt * 8.0))
+	var next_val: float = lerpf(_danger_vignette.intensity, target_danger, 1.0 - exp(-dt * 6.5))
 	_danger_vignette.set_intensity(next_val)
 
 
@@ -2189,7 +2894,21 @@ func _resolve_creature_collisions(creatures: Array[Creature]) -> void:
 			continue
 
 		if c.world_size < _charlie.world_size * Ecosystem.EDIBLE_RATIO:
-			# Edible prey!
+			# Edible prey! Capture visual snapshot BEFORE marking dead for gelatinous absorption
+			var sp_col: Color = c.species.get("color", Color(1.0, 0.85, 0.52, 1.0)) as Color
+			var sp_accent: Color = c.species.get("accent", Color(1.0, 0.94, 0.74, 1.0)) as Color
+			var world_offset: Vector2 = c.position - _charlie.position
+			var prey_size_ratio: float = clampf(c.world_size / maxf(_charlie.world_size, 0.001), 0.15, 0.95)
+			if _charlie.has_method("swallow_prey"):
+				var snap: Dictionary = {}
+				if c.has_method("get_visual_snapshot"):
+					snap = c.call("get_visual_snapshot") as Dictionary
+				var prey_tex: Texture2D = snap.get("texture", snap.get("tex", null)) as Texture2D
+				var prey_frame: int = int(snap.get("frame", snap.get("frame_idx", 0)))
+				var prey_hframes: int = maxi(1, int(snap.get("hframes", 4)))
+				var prey_tint: Color = snap.get("tint", snap.get("color", sp_col)) as Color
+				_charlie.call("swallow_prey", prey_tex, prey_frame, prey_hframes, prey_tint, world_offset, prey_size_ratio)
+
 			c.alive = false
 			if _combo_timer > 0.0:
 				_combo_count = mini(MAX_COMBO, _combo_count + 1)
@@ -2197,10 +2916,8 @@ func _resolve_creature_collisions(creatures: Array[Creature]) -> void:
 				_combo_count = 1
 			_combo_timer = COMBO_WINDOW
 
-			var prey_angle: float = (c.position - _charlie.position).angle()
+			var prey_angle: float = world_offset.angle()
 			_charlie.trigger_chomp(prey_angle, 1.0 + float(_combo_count - 1) * 0.06)
-			var sp_col: Color = c.species.get("color", Color(1.0, 0.85, 0.52, 1.0)) as Color
-			var sp_accent: Color = c.species.get("accent", Color(1.0, 0.94, 0.74, 1.0)) as Color
 			var burst_r: float = maxf(c.world_size * 1.65, _charlie.world_size * 0.72)
 			_spawn_burst(c.position, sp_col, burst_r)
 			_spawn_stardust(c.position, 8, maxf(c.world_size * 1.15, _charlie.world_size * 0.55), sp_col, sp_accent)
@@ -2245,6 +2962,8 @@ func _heal_one_droplet() -> void:
 	_heal_bite_counter = 0
 	_time_since_hurt = 0.0
 	_charlie.droplets_alive += 1
+	if _charlie.has_method("set_regen_progress"):
+		_charlie.call("set_regen_progress", 0.0)
 	_spawn_burst(_charlie.position, Color(1.0, 0.90, 0.46, 1.0), _charlie.world_size * 1.85)
 	if _audio != null:
 		_audio.play_heal()
@@ -2298,7 +3017,13 @@ func _advance_scale() -> void:
 		_heal_bite_counter = 0
 		_time_since_hurt = 0.0
 		_charlie.droplets_alive = Charlie.MAX_DROPLETS
-		_ecosystem.reset_for_scale(_charlie, current_scale_index)
+		if _charlie.has_method("set_regen_progress"):
+			_charlie.call("set_regen_progress", 0.0)
+		# Seamless logarithmic scale transition: old creatures shrink away visibly during zoom
+		if _ecosystem.has_method("begin_scale_transition"):
+			_ecosystem.call("begin_scale_transition", current_scale_index)
+		else:
+			_ecosystem.reset_for_scale(_charlie, current_scale_index)
 		_trigger_scale_warp_veil(current_scale_index)
 		_update_records(false)
 		_vibrate(60)
@@ -2368,19 +3093,44 @@ func _compute_target_zoom(charlie_size: float) -> float:
 func _update_background_shader(palette: Dictionary, progress: float) -> void:
 	if _bg_mat == null:
 		return
+	var accent_col: Color = palette.get("accent", palette["mote_color"]) as Color
 	_bg_mat.set_shader_parameter("bg_inner", palette["bg_inner"])
 	_bg_mat.set_shader_parameter("bg_outer", palette["bg_outer"])
 	_bg_mat.set_shader_parameter("mote_color", palette["mote_color"])
+	_bg_mat.set_shader_parameter("accent", accent_col)
 	_bg_mat.set_shader_parameter("cam_offset", _bg_parallax)
+	_bg_mat.set_shader_parameter("time_sec", _play_time)
 	_bg_mat.set_shader_parameter("viewport_size", get_viewport().get_visible_rect().size)
 	_bg_mat.set_shader_parameter("scale_progress", progress)
+
+
+func _update_global_shader_uniforms(palette: Dictionary) -> void:
+	if _global_uniforms.is_empty():
+		return
+	var bg_inner: Color = palette.get("bg_inner", Color(0.055, 0.153, 0.200, 1.0)) as Color
+	var rim_col: Color = palette.get("accent", palette.get("mote_color", Color(0.431, 0.906, 0.855, 1.0))) as Color
+	var charlie_col: Color = palette.get("blob_glow", palette.get("blob_edge", Color(1.0, 0.48, 0.36, 1.0))) as Color
+	if _global_uniforms.has(&"g_world_ambient"):
+		RenderingServer.global_shader_parameter_set(&"g_world_ambient", bg_inner)
+	if _global_uniforms.has(&"g_world_rim_color"):
+		RenderingServer.global_shader_parameter_set(&"g_world_rim_color", rim_col)
+	if _global_uniforms.has(&"g_charlie_light") and _charlie != null:
+		var light_vec: Vector4 = Vector4(
+			_charlie.position.x,
+			_charlie.position.y,
+			_charlie.world_size * 5.2,
+			0.92 + 0.08 * sin(_play_time * 3.0)
+		)
+		RenderingServer.global_shader_parameter_set(&"g_charlie_light", light_vec)
+	if _global_uniforms.has(&"g_charlie_color"):
+		RenderingServer.global_shader_parameter_set(&"g_charlie_color", charlie_col)
 
 
 func _update_hud() -> void:
 	if _spit_btn == null or _dash_btn == null:
 		return
 
-	# Power buttons (only redraw when cooldown ratio or power evolution level changes)
+	# Power droplets (only redraw when cooldown ratio or power evolution level changes)
 	var preset: Dictionary = Scales.DIFFICULTY_PRESETS[difficulty_mode] as Dictionary
 	var spit_max: float = maxf(0.1, float(preset.get("spit_cd", 2.4)))
 	var dash_max: float = maxf(0.1, _get_dash_cooldown())
@@ -2465,80 +3215,196 @@ func _draw_soft_glow(canvas: Node2D, pos: Vector2, radius: float, col: Color) ->
 
 
 func _draw_world_vfx(canvas: Node2D) -> void:
-	# Luminous scale-transition warp veil (expanding glow rings + soft radial mist flash)
+	# Additive HDR bioluminescent VFX layer (BLEND_MODE_ADD + AgX selective bloom > 1.15)
 	if _warp_flash_life > 0.0:
 		var wf_frac: float = clampf(_warp_flash_life / maxf(0.01, _warp_flash_max), 0.0, 1.0)
 		var wf_inv: float = 1.0 - wf_frac
 		var base_r: float = _charlie.world_size
-		# Soft radial mist flash
-		var mist_col: Color = Color(_warp_color.r, _warp_color.g, _warp_color.b, wf_frac * wf_frac * 0.34)
+		var mist_col: Color = Color(_warp_color.r, _warp_color.g, _warp_color.b, wf_frac * wf_frac * 0.32)
 		_draw_soft_glow(canvas, _warp_origin, base_r * (4.0 + wf_inv * 14.0), mist_col)
-		var core_mist: Color = Color(1.0, 0.94, 0.78, wf_frac * wf_frac * 0.42)
+		var core_mist: Color = Color(1.28, 1.18, 0.96, wf_frac * wf_frac * 0.40)
 		_draw_soft_glow(canvas, _warp_origin, base_r * (2.2 + wf_inv * 6.5), core_mist)
-		# Three staggered luminous warp rings
 		for ring_i: int in range(3):
 			var delay: float = float(ring_i) * 0.14
 			var r_t: float = clampf((wf_inv - delay) / (1.0 - delay), 0.0, 1.0)
 			if r_t > 0.0 and r_t < 1.0:
 				var r_fade: float = (1.0 - r_t) * (1.0 - r_t)
 				var ring_r: float = base_r * (1.4 + r_t * (11.5 - float(ring_i) * 1.6))
-				var outer_ring: Color = Color(_warp_color.r, _warp_color.g, _warp_color.b, r_fade * 0.35)
-				var inner_ring: Color = Color(1.0, 0.95, 0.84, r_fade * 0.78)
+				var outer_ring: Color = Color(_warp_color.r, _warp_color.g, _warp_color.b, r_fade * 0.34)
+				var inner_ring: Color = Color(1.32, 1.24, 1.06, r_fade * 0.78)
 				canvas.draw_arc(_warp_origin, ring_r, 0.0, TAU, 56, outer_ring, maxf(3.0, base_r * 0.30 * r_fade), true)
 				canvas.draw_arc(_warp_origin, ring_r, 0.0, TAU, 56, inner_ring, maxf(1.5, base_r * 0.10 * r_fade), true)
 
-	# Shockwaves (soft outer halo band + crisp bright core ring + spawn flash)
+	# Shockwaves (soft outer halo band + HDR luminous core ring + spawn flash)
 	for w: Dictionary in _shockwaves:
 		var frac: float = clampf(float(w["life"]) / maxf(0.01, float(w["max_life"])), 0.0, 1.0)
 		var w_pos: Vector2 = w["pos"] as Vector2
 		var col: Color = w["color"] as Color
 		var rad: float = float(w["radius"])
 		var halo_col: Color = Color(col.r, col.g, col.b, frac * 0.32)
-		var core_ring_col: Color = Color(minf(1.0, col.r + 0.25), minf(1.0, col.g + 0.25), minf(1.0, col.b + 0.25), frac * 0.92)
+		var core_ring_col: Color = Color(col.r * 1.32 + 0.20, col.g * 1.32 + 0.20, col.b * 1.32 + 0.20, frac * 0.92)
 		canvas.draw_arc(w_pos, rad, 0.0, TAU, 48, halo_col, maxf(4.0, _charlie.world_size * 0.34 * frac), true)
 		canvas.draw_arc(w_pos, rad, 0.0, TAU, 48, core_ring_col, maxf(1.8, _charlie.world_size * 0.11 * frac), true)
 		if frac > 0.45:
-			var flash_a: float = ((frac - 0.45) / 0.55) * 0.36
+			var flash_a: float = ((frac - 0.45) / 0.55) * 0.34
 			_draw_soft_glow(canvas, w_pos, rad * 0.72, Color(col.r, col.g, col.b, flash_a))
 
-	# Molten embers & species-colored stardust droplets (soft layered radial glow)
+	# Molten embers & species-colored stardust droplets (additive HDR sparks)
 	for em: Dictionary in _embers:
 		var frac: float = clampf(float(em["life"]) / maxf(0.01, float(em["max_life"])), 0.0, 1.0)
 		var em_pos: Vector2 = em["pos"] as Vector2
 		var em_r: float = float(em["radius"]) * (0.45 + 0.55 * frac)
 		var col: Color = em["color"] as Color
-		_draw_soft_glow(canvas, em_pos, em_r * 2.5, Color(col.r, col.g, col.b, frac * 0.52))
-		_draw_soft_glow(canvas, em_pos, em_r * 1.12, Color(1.0, 0.96, 0.86, frac * 0.92))
+		_draw_soft_glow(canvas, em_pos, em_r * 2.5, Color(col.r, col.g, col.b, frac * 0.50))
+		_draw_soft_glow(canvas, em_pos, em_r * 1.12, Color(1.36, 1.28, 1.08, frac * 0.90))
 
-	# Lava spit projectiles (multi-layer additive-feeling radial glow)
+	# Lava spit projectiles (multi-layer HDR molten glow)
 	for p: Dictionary in _projectiles:
 		var pos: Vector2 = p["pos"] as Vector2
 		var r: float = float(p["radius"])
 		var lvl: int = int(p["level"])
-		var outer_col: Color = Color(1.0, 0.42, 0.20, 0.44) if lvl < 3 else Color(1.0, 0.70, 0.24, 0.56)
-		var mid_col: Color = Color(1.0, 0.52, 0.28, 0.88) if lvl < 3 else Color(1.0, 0.78, 0.34, 0.94)
-		var core_col: Color = Color(1.0, 0.96, 0.82, 0.98)
+		var outer_col: Color = Color(1.0, 0.42, 0.20, 0.42) if lvl < 3 else Color(1.0, 0.70, 0.24, 0.54)
+		var mid_col: Color = Color(1.22, 0.62, 0.32, 0.86) if lvl < 3 else Color(1.28, 0.92, 0.40, 0.92)
+		var core_col: Color = Color(1.48, 1.38, 1.12, 0.98)
 		_draw_soft_glow(canvas, pos, r * (3.1 if lvl >= 3 else 2.5), outer_col)
 		_draw_soft_glow(canvas, pos, r * 1.45, mid_col)
 		_draw_soft_glow(canvas, pos, r * 0.78, core_col)
 
-	# Chomp / impact / heal bursts (soft flash + expanding glow ring + radial glow sparkles)
+	# Chomp / impact / heal bursts (soft flash + expanding glow ring + HDR sparkles)
 	for b: Dictionary in _bursts:
 		var frac: float = clampf(float(b["life"]) / maxf(0.01, float(b["max_life"])), 0.0, 1.0)
 		var inv_f: float = 1.0 - frac
 		var pos: Vector2 = b["pos"] as Vector2
 		var col: Color = b["color"] as Color
 		var max_r: float = float(b["radius"])
-		# Soft central glow flash
-		_draw_soft_glow(canvas, pos, max_r * (0.95 + inv_f * 0.65), Color(col.r, col.g, col.b, frac * frac * 0.48))
-		# Soft outer halo ring + crisp inner luminous ring
+		_draw_soft_glow(canvas, pos, max_r * (0.95 + inv_f * 0.65), Color(col.r, col.g, col.b, frac * frac * 0.46))
 		var ring_r: float = max_r * (0.32 + inv_f * 0.92)
 		canvas.draw_arc(pos, ring_r, 0.0, TAU, 32, Color(col.r, col.g, col.b, frac * 0.38), maxf(3.0, max_r * 0.20 * frac), true)
-		canvas.draw_arc(pos, ring_r, 0.0, TAU, 32, Color(1.0, 0.97, 0.88, frac * 0.82), maxf(1.4, max_r * 0.065 * frac), true)
-		# 6 glowing radial sparkle motes
+		canvas.draw_arc(pos, ring_r, 0.0, TAU, 32, Color(1.30, 1.24, 1.08, frac * 0.82), maxf(1.4, max_r * 0.065 * frac), true)
 		for i: int in range(6):
 			var ang: float = float(i) * TAU / 6.0 + inv_f * 0.65
 			var p_off: Vector2 = Vector2.from_angle(ang) * (max_r * (0.25 + inv_f * 0.98))
 			var sp_r: float = maxf(1.4, max_r * 0.18 * frac)
-			_draw_soft_glow(canvas, pos + p_off, sp_r * 2.2, Color(col.r, col.g, col.b, frac * 0.58))
-			_draw_soft_glow(canvas, pos + p_off, sp_r * 1.0, Color(1.0, 0.97, 0.88, frac * 0.92))
+			_draw_soft_glow(canvas, pos + p_off, sp_r * 2.2, Color(col.r, col.g, col.b, frac * 0.56))
+			_draw_soft_glow(canvas, pos + p_off, sp_r * 1.0, Color(1.36, 1.30, 1.12, frac * 0.90))
+
+
+# --- Visual QA Deterministic Screenshot Harness (--capture-shots=<dir>) ---
+
+func _get_capture_shots_dir() -> String:
+	for raw_arg: String in OS.get_cmdline_user_args():
+		if raw_arg.begins_with("--capture-shots="):
+			return raw_arg.substr("--capture-shots=".length()).strip_edges()
+	for raw_arg: String in OS.get_cmdline_args():
+		if raw_arg.begins_with("--capture-shots="):
+			return raw_arg.substr("--capture-shots=".length()).strip_edges()
+	return ""
+
+
+func _wait_capture_frames(count: int) -> void:
+	for _i: int in range(count):
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+
+
+func _save_capture_png(out_dir: String, filename: String) -> void:
+	DirAccess.make_dir_recursive_absolute(out_dir)
+	var img: Image = get_viewport().get_texture().get_image()
+	if img != null and not img.is_empty():
+		var out_path: String = out_dir.path_join(filename)
+		var err: Error = img.save_png(out_path)
+		print("[capture_shots] Saved %s (%dx%d, err=%d)" % [out_path, img.get_width(), img.get_height(), int(err)])
+	else:
+		push_warning("[capture_shots] Empty viewport image for %s" % filename)
+
+
+func _prepare_capture_world(scale_idx: int, steer_dir: Vector2) -> void:
+	_capture_steer_override = steer_dir
+	_hide_all_overlays()
+	_clear_banners()
+	state = GameState.PLAYING
+	_hud_root.visible = true
+	_reset_world_to_scale(scale_idx)
+	_charlie.invuln_timer = 10.0
+
+	# Frame a rich, unobstructed composition of illuminated creatures around Charlie
+	var sz: float = _charlie.world_size
+	var creatures: Array[Creature] = _ecosystem.get_creatures()
+	var prey_offsets: Array[Vector2] = [
+		Vector2(3.8, -1.7),
+		Vector2(-3.9, -1.9),
+		Vector2(4.4, 2.1),
+		Vector2(-3.4, 2.6),
+		Vector2(1.8, -3.6),
+		Vector2(-1.6, 3.7),
+	]
+	var pred_offsets: Array[Vector2] = [
+		Vector2(-7.2, -2.4),
+		Vector2(7.6, 2.3),
+		Vector2(-6.8, 3.1),
+		Vector2(7.0, -3.2),
+	]
+	var prey_i: int = 0
+	var pred_i: int = 0
+	for c: Creature in creatures:
+		if not is_instance_valid(c):
+			continue
+		c.alpha = 1.0
+		c.modulate.a = 1.0
+		if c.world_size < sz * Ecosystem.EDIBLE_RATIO and prey_i < prey_offsets.size():
+			c.position = _charlie.position + prey_offsets[prey_i] * sz
+			prey_i += 1
+		elif c.world_size >= sz * Ecosystem.PREDATOR_RATIO and pred_i < pred_offsets.size():
+			c.position = _charlie.position + pred_offsets[pred_i] * sz
+			pred_i += 1
+		c.update_visuals(sz)
+
+
+func _run_visual_capture(out_dir: String) -> void:
+	# Ensure exact 1280x720 16:9 windowed capture even when project.godot defaults to fullscreen
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+	DisplayServer.window_set_size(Vector2i(1280, 720))
+	await _wait_capture_frames(4)
+	_update_safe_area()
+
+	# 1. Redesigned Living Ghibli Title Screen
+	_enter_title_screen()
+	if _overlay_tween != null and _overlay_tween.is_valid():
+		_overlay_tween.kill()
+	_title_panel.modulate.a = 1.0
+	await _wait_capture_frames(14)
+	_save_capture_png(out_dir, "01_title.png")
+
+	# 2. Miyazaki Bedroom Window Prologue Cutscene
+	if _cutscenes != null:
+		_hide_all_overlays()
+		_hud_root.visible = false
+		state = GameState.CUTSCENE
+		_cutscenes.play_cutscene("intro", func() -> void: pass)
+		await _wait_capture_frames(18)
+		_save_capture_png(out_dir, "02_prologue.png")
+		if _cutscenes.has_method("skip_cutscene"):
+			_cutscenes.skip_cutscene()
+
+	# 3. Live World I Quantique gameplay
+	_prepare_capture_world(0, Vector2(0.84, -0.18))
+	await _wait_capture_frames(16)
+	_save_capture_png(out_dir, "03_quantum.png")
+
+	# 4. Live World III Sous-Bois gameplay (4-plane forest depth + moonlight + fireflies)
+	_prepare_capture_world(2, Vector2(0.82, -0.16))
+	await _wait_capture_frames(16)
+	_save_capture_png(out_dir, "04_forest.png")
+
+	# 5. Live World IV Ville Endormie gameplay (rooftops + lava-lamp window + lanterns)
+	_prepare_capture_world(3, Vector2(0.86, -0.14))
+	await _wait_capture_frames(16)
+	_save_capture_png(out_dir, "05_city.png")
+
+	# 6. Live World VI Cosmique gameplay (nebulae + distant Golden Star + 3D Charlie)
+	_prepare_capture_world(5, Vector2(0.80, -0.20))
+	await _wait_capture_frames(16)
+	_save_capture_png(out_dir, "06_cosmic.png")
+
+	_capture_steer_override = Vector2.ZERO
+	get_tree().quit(0)

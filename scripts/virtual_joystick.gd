@@ -5,12 +5,12 @@ extends Control
 ## power buttons simultaneously without interference.
 
 const DEADZONE: float = 0.08
-const IDLE_ALPHA: float = 0.08
+const IDLE_ALPHA: float = 0.0
 const ACTIVE_ALPHA: float = 0.78
 
 @export var max_radius: float = 72.0
 @export var knob_radius: float = 30.0
-@export var touch_padding: float = 40.0
+@export var touch_padding: float = 24.0
 
 var output_vector: Vector2 = Vector2.ZERO
 var is_active: bool = false
@@ -145,8 +145,10 @@ func _update_stick_from_global(global_pos: Vector2) -> void:
 
 
 func _draw() -> void:
-	var center: Vector2 = size * 0.5
 	var a: float = _visual_alpha
+	if a <= 0.002:
+		return
+	var center: Vector2 = size * 0.5
 
 	# Translucent glassmorphic base disc
 	draw_circle(center, max_radius + 5.0, Color(0.02, 0.07, 0.12, 0.24 * a))

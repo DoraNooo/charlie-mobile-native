@@ -4,9 +4,11 @@ extends Node2D
 ## smooth fade-in, viewport culling, and despawning for ~28 balanced creatures around Charlie.
 
 const TARGET_COUNT: int = 28
-const MAX_POOL_SIZE: int = 40
+const MAX_POOL_SIZE: int = 35
 const EDIBLE_RATIO: float = 0.96
 const PREDATOR_RATIO: float = 1.06
+const RETIRE_MIN_SIZE_RATIO: float = 0.08
+const RETIRE_MAX_DURATION: float = 2.4
 
 var difficulty: String = "chill"
 
@@ -32,6 +34,18 @@ func set_difficulty(mode: String) -> void:
 			c.show_danger_halo = show_halo
 
 
+func begin_scale_transition(new_scale_idx: int) -> void:
+	_current_scale_idx = clampi(new_scale_idx, 0, Scales.NUM_SCALES - 1)
+	Creature.preload_scale(_current_scale_idx)
+	for c: Creature in _creatures:
+		if is_instance_valid(c) and c.alive:
+			c.retiring = true
+			c.retire_timer = 0.0
+			c.is_edible = false
+			c.is_predator = false
+			c.proximity_ratio = 0.0
+
+
 func reset_for_scale(charlie: Charlie, scale_idx: int) -> void:
 	_current_scale_idx = clampi(scale_idx, 0, Scales.NUM_SCALES - 1)
 	Creature.preload_scale(_current_scale_idx)
@@ -51,13 +65,13 @@ func reset_for_scale(charlie: Charlie, scale_idx: int) -> void:
 		var creature: Creature = _spawn_creature(charlie, _current_scale_idx, spawn_pos, want_prey)
 		if creature != null:
 			creature.alpha = randf_range(0.15, 0.55)
-			creature.modulate.a = creature.alpha
+			creature.update_visuals(charlie.world_size)
 
 
 func get_creatures() -> Array[Creature]:
 	var active: Array[Creature] = []
 	for c: Creature in _creatures:
-		if is_instance_valid(c) and c.alive:
+		if is_instance_valid(c) and c.alive and not c.retiring:
 			active.append(c)
 	return active
 
@@ -77,8 +91,7 @@ func step_ecosystem(
 	var step_dt: float = clampf(dt, 0.0, 0.05)
 	var next_scale: int = clampi(scale_idx, 0, Scales.NUM_SCALES - 1)
 	if next_scale != _current_scale_idx:
-		_current_scale_idx = next_scale
-		Creature.preload_scale(_current_scale_idx)
+		begin_scale_transition(next_scale)
 
 	var preset: Dictionary = _get_preset()
 	var speed_scale: float = float(preset.get("speed_scale", 1.0))
@@ -98,6 +111,7 @@ func step_ecosystem(
 	var visible_base_r: float = view_half_len * 1.12
 	var min_keep_size: float = charlie_size * 0.14
 	var max_keep_size: float = charlie_size * 3.4
+	var retire_tiny_size: float = charlie_size * RETIRE_MIN_SIZE_RATIO
 	var edible_thresh: float = charlie_size * EDIBLE_RATIO
 	var pred_thresh: float = charlie_size * PREDATOR_RATIO
 
@@ -106,6 +120,7 @@ func step_ecosystem(
 	var nearest_pred: Creature = null
 	var nearest_pred_dist: float = INF
 	var predator_chasing: bool = false
+	var active_count: int = 0
 
 	var idx: int = _creatures.size() - 1
 	while idx >= 0:
@@ -124,6 +139,56 @@ func step_ecosystem(
 		var to_charlie: Vector2 = charlie_pos - c.position
 		var dist_sq: float = to_charlie.length_squared()
 
+		if c.retiring:
+			# Powers of Ten transition: retiring creatures drift peacefully, ignore collisions/chasing,
+			# and fade smoothly as Charlie zooms out or after 2.4s.
+			if dist_sq > despawn_radius_sq:
+				_recycle_creature(c)
+				_creatures.remove_at(idx)
+				idx -= 1
+				continue
+
+			c.retire_timer += step_dt
+			c.is_edible = false
+			c.is_predator = false
+			c.proximity_ratio = 0.0
+			if c.burn_flash > 0.0:
+				c.burn_flash = maxf(0.0, c.burn_flash - step_dt * 3.4)
+			if c.stun_timer > 0.0:
+				c.stun_timer = maxf(0.0, c.stun_timer - step_dt)
+
+			if c.world_size < retire_tiny_size or c.retire_timer >= RETIRE_MAX_DURATION:
+				c.alpha = maxf(0.0, c.alpha - step_dt * 1.85)
+			elif c.retire_timer > 1.1:
+				var gentle_cap: float = clampf(1.0 - (c.retire_timer - 1.1) / 1.6, 0.20, 1.0)
+				c.alpha = minf(c.alpha, gentle_cap)
+
+			if c.alpha <= 0.01 or c.retire_timer >= RETIRE_MAX_DURATION + 0.9:
+				_recycle_creature(c)
+				_creatures.remove_at(idx)
+				idx -= 1
+				continue
+
+			var r_spec_speed: float = float(c.species.get("speed", 1.0))
+			var r_behavior: String = str(c.species.get("behavior", "roam"))
+			var r_dir: Vector2 = _step_ambient_direction(c, r_behavior, step_dt)
+			var r_speed: float = maxf(c.world_size * 2.2, charlie_size * 0.45) * r_spec_speed * speed_scale * 0.65
+			var r_angle_diff: float = wrapf(r_dir.angle() - c.facing_angle, -PI, PI)
+			c.facing_angle += clampf(r_angle_diff, -2.5 * step_dt, 2.5 * step_dt)
+			var r_target_vel: Vector2 = Vector2.from_angle(c.facing_angle) * r_speed
+			c.velocity = c.velocity.lerp(r_target_vel, 1.0 - exp(-3.5 * step_dt))
+			c.position += c.velocity * step_dt
+			c.phase += step_dt * (1.2 + r_spec_speed * 0.45)
+
+			var r_vis_r: float = visible_base_r + c.world_size * 3.0
+			var r_is_vis: bool = dist_sq < r_vis_r * r_vis_r
+			c.visible = r_is_vis
+			if r_is_vis:
+				c.update_visuals(charlie_size)
+
+			idx -= 1
+			continue
+
 		# Despawn if drifted well outside the active viewport or hopelessly tiny/huge
 		if dist_sq > despawn_radius_sq or c.world_size < min_keep_size or c.world_size > max_keep_size:
 			_recycle_creature(c)
@@ -131,12 +196,12 @@ func step_ecosystem(
 			idx -= 1
 			continue
 
+		active_count += 1
 		var dist: float = sqrt(dist_sq)
 
-		# Smooth edge fade-in & status decay
+		# Smooth edge fade-in & status decay (alpha passed via shader uniform alpha_mult)
 		if c.alpha < 1.0:
 			c.alpha = minf(1.0, c.alpha + step_dt * 1.9)
-			c.modulate.a = c.alpha
 		if c.burn_flash > 0.0:
 			c.burn_flash = maxf(0.0, c.burn_flash - step_dt * 3.4)
 		if c.stun_timer > 0.0:
@@ -206,15 +271,15 @@ func step_ecosystem(
 		var is_vis: bool = dist_sq < vis_r * vis_r
 		c.visible = is_vis
 		if is_vis:
-			c.update_visuals()
+			c.update_visuals(charlie_size)
 
 		idx -= 1
 
-	# Replenish ecosystem around the outer viewport edge to maintain ~TARGET_COUNT
+	# Replenish active new-world ecosystem around the outer viewport edge to maintain ~TARGET_COUNT
 	var spawn_min_r: float = view_half_len * 1.04
 	var spawn_max_r: float = view_half_len * 1.32
 	var spawns_this_frame: int = 0
-	while _creatures.size() < TARGET_COUNT and spawns_this_frame < 4:
+	while active_count < TARGET_COUNT and spawns_this_frame < 4:
 		var want_prey: bool = _should_spawn_prey()
 		var spawn_pos: Vector2 = _random_ring_point(charlie_pos, spawn_min_r, spawn_max_r)
 		var spawned: Creature = _spawn_creature(charlie, _current_scale_idx, spawn_pos, want_prey)
@@ -223,6 +288,7 @@ func step_ecosystem(
 			var inward: Vector2 = (charlie_pos - spawn_pos).normalized()
 			spawned.facing_angle = inward.angle() + randf_range(-0.65, 0.65)
 			spawned.wander_angle = spawned.facing_angle
+			active_count += 1
 		spawns_this_frame += 1
 
 	_step_result["nearest_prey"] = nearest_prey
@@ -313,6 +379,9 @@ func _recycle_creature(c: Creature) -> void:
 	if not is_instance_valid(c):
 		return
 	c.alive = false
+	c.retiring = false
+	c.retire_timer = 0.0
+	c.alpha = 0.0
 	c.visible = false
 	c.set_process(false)
 	if _pool.size() < MAX_POOL_SIZE:
@@ -324,12 +393,15 @@ func _recycle_creature(c: Creature) -> void:
 func _should_spawn_prey() -> bool:
 	var preset: Dictionary = _get_preset()
 	var target_prey_ratio: float = float(preset.get("prey_ratio", 0.66))
-	if _creatures.size() >= 6:
-		var prey_count: int = 0
-		for c: Creature in _creatures:
-			if is_instance_valid(c) and c.alive and c.is_edible:
+	var active_total: int = 0
+	var prey_count: int = 0
+	for c: Creature in _creatures:
+		if is_instance_valid(c) and c.alive and not c.retiring:
+			active_total += 1
+			if c.is_edible:
 				prey_count += 1
-		var current_ratio: float = float(prey_count) / float(_creatures.size())
+	if active_total >= 6:
+		var current_ratio: float = float(prey_count) / float(active_total)
 		if current_ratio < target_prey_ratio - 0.08:
 			return true
 		if current_ratio > target_prey_ratio + 0.08:

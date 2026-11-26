@@ -25,7 +25,7 @@ Scales="*res://scripts/scales.gd"
 window/size/viewport_width=1280
 window/size/viewport_height=720
 window/size/mode=3
-window/stretch/mode="viewport"
+window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/handheld/orientation=4
 
@@ -40,4 +40,28 @@ renderer/rendering_method.mobile="mobile"
 anti_aliasing/quality/msaa_2d=0
 textures/canvas_textures/default_texture_filter=1
 textures/vram_compression/import_etc2_astc=true
+viewport/hdr_2d=true
 environment/defaults/default_clear_color=Color(0.027, 0.078, 0.11, 1)
+
+[shader_globals]
+
+g_key_light_dir={
+"type": "vec3",
+"value": Vector3(-0.52, -0.62, 0.58)
+}
+g_world_ambient={
+"type": "color",
+"value": Color(0.08, 0.22, 0.28, 1)
+}
+g_world_rim_color={
+"type": "color",
+"value": Color(0.431, 0.906, 0.855, 1)
+}
+g_charlie_light={
+"type": "vec4",
+"value": Vector4(0, 0, 240, 1)
+}
+g_charlie_color={
+"type": "color",
+"value": Color(1, 0.62, 0.38, 1)
+}

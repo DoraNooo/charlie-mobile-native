@@ -3,25 +3,27 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dml4w1q847vlk"
-path="res://.godot/imported/quark.png-8133c48d8d83744082209d73bcda3858.ctex"
+path.s3tc="res://.godot/imported/quark.png-8133c48d8d83744082209d73bcda3858.s3tc.ctex"
+path.etc2="res://.godot/imported/quark.png-8133c48d8d83744082209d73bcda3858.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/sprites/creatures/quark.png"
-dest_files=["res://.godot/imported/quark.png-8133c48d8d83744082209d73bcda3858.ctex"]
+dest_files=["res://.godot/imported/quark.png-8133c48d8d83744082209d73bcda3858.s3tc.ctex", "res://.godot/imported/quark.png-8133c48d8d83744082209d73bcda3858.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=false
+mipmaps/generate=true
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""
