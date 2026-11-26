@@ -25,7 +25,7 @@ void fragment() {
 	vec2 jitter = vec2(sin(rnd * 6.28 + TIME * 0.4), cos(rnd * 9.42 + TIME * 0.35)) * 0.28;
 	float dist = length(gv - jitter);
 	float twinkle = 0.45 + 0.55 * sin(TIME * (1.2 + rnd * 1.8) + rnd * 12.0);
-	float star = smoothstep(0.075, 0.01, dist) * twinkle * step(0.45, rnd);
+	float star = (1.0 - smoothstep(0.01, 0.075, dist)) * twinkle * step(0.45, rnd);
 
 	col += mote_color.rgb * star * 0.32;
 	COLOR = vec4(col, 1.0);

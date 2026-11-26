@@ -48,8 +48,8 @@ void fragment() {
 	float mask = smoothstep(0.92, 1.08, field);
 
 	// Internal convection wax bubbles
-	float b1 = smoothstep(0.28, 0.05, length(warped - vec2(cos(TIME * 0.8) * 0.22, sin(TIME * 0.6) * 0.22)));
-	float b2 = smoothstep(0.22, 0.04, length(warped - vec2(sin(TIME * 1.1) * 0.26, cos(TIME * 0.9) * 0.18)));
+	float b1 = 1.0 - smoothstep(0.05, 0.28, length(warped - vec2(cos(TIME * 0.8) * 0.22, sin(TIME * 0.6) * 0.22)));
+	float b2 = 1.0 - smoothstep(0.04, 0.22, length(warped - vec2(sin(TIME * 1.1) * 0.26, cos(TIME * 0.9) * 0.18)));
 
 	// 3D liquid shading (warm hot center -> glossy coral rim -> specular highlight)
 	float inner_t = clamp((field - 1.0) * 0.45, 0.0, 1.0);
@@ -57,16 +57,16 @@ void fragment() {
 	body_col += vec3(1.0, 0.94, 0.78) * (b1 * 0.16 + b2 * 0.12);
 
 	// Top-left glossy liquid catchlight
-	float spec = smoothstep(0.26, 0.02, length(warped - vec2(-0.24, -0.26)));
+	float spec = 1.0 - smoothstep(0.02, 0.26, length(warped - vec2(-0.24, -0.26)));
 	body_col += vec3(1.0) * spec * 0.32;
 
 	// Fresnel rim highlight
-	float rim = smoothstep(1.45, 0.98, field) * mask;
+	float rim = (1.0 - smoothstep(0.98, 1.45, field)) * mask;
 	body_col += core_color.rgb * rim * 0.25;
 
 	// Vulnerable danger ring when 0 droplets left
 	float ring_d = abs(length(p) - (0.98 + sin(TIME * 7.0) * 0.08));
-	float danger_ring = smoothstep(0.06, 0.01, ring_d) * danger_pulse;
+	float danger_ring = (1.0 - smoothstep(0.01, 0.06, ring_d)) * danger_pulse;
 
 	vec3 final_rgb = mix(edge_color.rgb, body_col, mask);
 	final_rgb = mix(final_rgb, vec3(1.0, 0.30, 0.36), danger_ring * 0.85);

@@ -124,7 +124,7 @@ func step_ecosystem(
 
 		# Classify relative to Charlie
 		var edible: bool = c.world_size < charlie.world_size * EDIBLE_RATIO
-		var predator: bool = c.world_size > charlie.world_size * PREDATOR_RATIO
+		var predator: bool = c.world_size >= charlie.world_size * PREDATOR_RATIO
 		c.is_edible = edible
 		c.is_predator = predator
 		c.show_danger_halo = show_halo

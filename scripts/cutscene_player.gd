@@ -16,12 +16,12 @@ const CUTSCENES: Dictionary = {
 			{
 				"art": ART_CHARLIE,
 				"text": "Dans le silence vibrant du vide quantique, la petite Charlie s'éveille — une goutte de lave aux deux petites dents lumineuses.",
-				"zoom_from": 1.04, "zoom_to": 1.18, "pan_from": Vector2(0.0, 8.0), "pan_to": Vector2(0.0, -14.0),
+				"zoom_from": 1.08, "zoom_to": 1.20, "pan_from": Vector2(0.0, 8.0), "pan_to": Vector2(0.0, -14.0),
 			},
 			{
 				"art": ART_PORTRAIT,
 				"text": "Curieuse et intrépide, elle rêve de goûter chaque monde — du plus minuscule quark jusqu'aux galaxies spirales.",
-				"zoom_from": 1.12, "zoom_to": 1.02, "pan_from": Vector2(-12.0, 0.0), "pan_to": Vector2(12.0, -8.0),
+				"zoom_from": 1.18, "zoom_to": 1.08, "pan_from": Vector2(-12.0, 0.0), "pan_to": Vector2(12.0, -8.0),
 			},
 		],
 	},
@@ -31,12 +31,12 @@ const CUTSCENES: Dictionary = {
 			{
 				"art": ART_LANDSCAPE,
 				"text": "Un voile d'eau s'ouvre devant la petite Charlie : la voilà plongée dans un océan miniature peuplé de spores, d'amibes et de tardigrades.",
-				"zoom_from": 1.02, "zoom_to": 1.15, "pan_from": Vector2(-16.0, 4.0), "pan_to": Vector2(16.0, -6.0),
+				"zoom_from": 1.08, "zoom_to": 1.20, "pan_from": Vector2(-16.0, 4.0), "pan_to": Vector2(16.0, -6.0),
 			},
 			{
 				"art": ART_CHARLIE,
 				"text": "Ses joues rougeoient de chaleur : chaque bouchée la rend plus grande et plus vive !",
-				"zoom_from": 1.06, "zoom_to": 1.16, "pan_from": Vector2(0.0, 6.0), "pan_to": Vector2(0.0, -10.0),
+				"zoom_from": 1.08, "zoom_to": 1.18, "pan_from": Vector2(0.0, 6.0), "pan_to": Vector2(0.0, -10.0),
 			},
 		],
 	},
@@ -46,12 +46,12 @@ const CUTSCENES: Dictionary = {
 			{
 				"art": ART_PORTRAIT,
 				"text": "La brume du sous-bois s'élève. La petite Charlie glisse parmi les fourmis, les lucioles dorées, les coccinelles et les grenouilles.",
-				"zoom_from": 1.04, "zoom_to": 1.17, "pan_from": Vector2(10.0, 10.0), "pan_to": Vector2(-10.0, -12.0),
+				"zoom_from": 1.08, "zoom_to": 1.20, "pan_from": Vector2(10.0, 10.0), "pan_to": Vector2(-10.0, -12.0),
 			},
 			{
 				"art": ART_LANDSCAPE,
 				"text": "Sa flamme intérieure crépite : ses pouvoirs de lave s'éveillent au cœur de la forêt !",
-				"zoom_from": 1.14, "zoom_to": 1.03, "pan_from": Vector2(-12.0, -6.0), "pan_to": Vector2(14.0, 6.0),
+				"zoom_from": 1.18, "zoom_to": 1.08, "pan_from": Vector2(-12.0, -6.0), "pan_to": Vector2(14.0, 6.0),
 			},
 		],
 	},
@@ -61,12 +61,12 @@ const CUTSCENES: Dictionary = {
 			{
 				"art": ART_LANDSCAPE,
 				"text": "Les feuilles cèdent la place aux lanternes célestes. Charlie plane désormais parmi les chouettes, les voitures et les grands dirigeables.",
-				"zoom_from": 1.03, "zoom_to": 1.16, "pan_from": Vector2(-18.0, 0.0), "pan_to": Vector2(18.0, -8.0),
+				"zoom_from": 1.08, "zoom_to": 1.20, "pan_from": Vector2(-18.0, 0.0), "pan_to": Vector2(18.0, -8.0),
 			},
 			{
 				"art": ART_CHARLIE,
 				"text": "Rien n'arrête sa curiosité : la petite goutte de braise illumine toute la nuit !",
-				"zoom_from": 1.05, "zoom_to": 1.15, "pan_from": Vector2(8.0, 6.0), "pan_to": Vector2(-8.0, -8.0),
+				"zoom_from": 1.08, "zoom_to": 1.18, "pan_from": Vector2(8.0, 6.0), "pan_to": Vector2(-8.0, -8.0),
 			},
 		],
 	},
@@ -76,12 +76,12 @@ const CUTSCENES: Dictionary = {
 			{
 				"art": ART_PORTRAIT,
 				"text": "La petite Charlie quitte la Terre pour la valse des comètes et des lunes. L'espace entier chante autour de son cœur de braise.",
-				"zoom_from": 1.04, "zoom_to": 1.18, "pan_from": Vector2(0.0, 14.0), "pan_to": Vector2(0.0, -14.0),
+				"zoom_from": 1.08, "zoom_to": 1.20, "pan_from": Vector2(0.0, 14.0), "pan_to": Vector2(0.0, -14.0),
 			},
 			{
 				"art": ART_LANDSCAPE,
 				"text": "Son énergie solaire rayonne : même les géantes à anneaux admirent son passage !",
-				"zoom_from": 1.14, "zoom_to": 1.02, "pan_from": Vector2(16.0, -4.0), "pan_to": Vector2(-16.0, 6.0),
+				"zoom_from": 1.18, "zoom_to": 1.08, "pan_from": Vector2(16.0, -4.0), "pan_to": Vector2(-16.0, 6.0),
 			},
 		],
 	},
@@ -91,12 +91,12 @@ const CUTSCENES: Dictionary = {
 			{
 				"art": ART_LANDSCAPE,
 				"text": "Étoiles, nébuleuses et galaxies spirales gravitent à portée de la petite Charlie. La goutte d'autrefois embrasse tout l'univers.",
-				"zoom_from": 1.02, "zoom_to": 1.18, "pan_from": Vector2(-14.0, 8.0), "pan_to": Vector2(14.0, -10.0),
+				"zoom_from": 1.08, "zoom_to": 1.22, "pan_from": Vector2(-14.0, 8.0), "pan_to": Vector2(14.0, -10.0),
 			},
 			{
 				"art": ART_CHARLIE,
 				"text": "Un dernier voyage lumineux l'attend au sommet du cosmos.",
-				"zoom_from": 1.06, "zoom_to": 1.18, "pan_from": Vector2(0.0, 6.0), "pan_to": Vector2(0.0, -12.0),
+				"zoom_from": 1.08, "zoom_to": 1.20, "pan_from": Vector2(0.0, 6.0), "pan_to": Vector2(0.0, -12.0),
 			},
 		],
 	},
@@ -106,12 +106,12 @@ const CUTSCENES: Dictionary = {
 			{
 				"art": ART_PORTRAIT,
 				"text": "D'un frisson quantique jusqu'aux galaxies spirales, la petite Charlie est devenue lumière infinie.",
-				"zoom_from": 1.04, "zoom_to": 1.18, "pan_from": Vector2(0.0, 12.0), "pan_to": Vector2(0.0, -14.0),
+				"zoom_from": 1.08, "zoom_to": 1.20, "pan_from": Vector2(0.0, 12.0), "pan_to": Vector2(0.0, -14.0),
 			},
 			{
 				"art": ART_CHARLIE,
 				"text": "Ses deux petites dents brillent comme des étoiles jumelles. Merci d'avoir guidé Charlie à travers tous les mondes !",
-				"zoom_from": 1.12, "zoom_to": 1.02, "pan_from": Vector2(-10.0, 0.0), "pan_to": Vector2(10.0, -6.0),
+				"zoom_from": 1.18, "zoom_to": 1.08, "pan_from": Vector2(-10.0, 0.0), "pan_to": Vector2(10.0, -6.0),
 			},
 		],
 	},
@@ -120,6 +120,10 @@ const CUTSCENES: Dictionary = {
 var _root: Control = null
 var _art_clip: Control = null
 var _art_rect: TextureRect = null
+var _top_grad: TextureRect = null
+var _top_margin: MarginContainer = null
+var _bot_grad: TextureRect = null
+var _bot_margin: MarginContainer = null
 var _chapter_label: Label = null
 var _skip_button: Button = null
 var _caption_label: Label = null
@@ -127,6 +131,7 @@ var _dots_box: HBoxContainer = null
 var _next_prompt: Label = null
 
 var _textures: Dictionary = {}
+var _safe_insets: Rect2 = Rect2()
 var _active: bool = false
 var _slides: Array = []
 var _slide_index: int = 0
@@ -186,32 +191,32 @@ func _build_ui() -> void:
 	_root.add_child(scrim)
 
 	# Top gradient bar
-	var top_grad: TextureRect = TextureRect.new()
-	top_grad.anchor_left = 0.0
-	top_grad.anchor_top = 0.0
-	top_grad.anchor_right = 1.0
-	top_grad.anchor_bottom = 0.0
-	top_grad.offset_bottom = 116.0
-	top_grad.texture = _make_vertical_gradient(Color(0.02, 0.04, 0.08, 0.90), Color(0.02, 0.04, 0.08, 0.0))
-	top_grad.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	top_grad.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_root.add_child(top_grad)
+	_top_grad = TextureRect.new()
+	_top_grad.anchor_left = 0.0
+	_top_grad.anchor_top = 0.0
+	_top_grad.anchor_right = 1.0
+	_top_grad.anchor_bottom = 0.0
+	_top_grad.offset_bottom = 116.0
+	_top_grad.texture = _make_vertical_gradient(Color(0.02, 0.04, 0.08, 0.90), Color(0.02, 0.04, 0.08, 0.0))
+	_top_grad.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_top_grad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(_top_grad)
 
-	var top_margin: MarginContainer = MarginContainer.new()
-	top_margin.anchor_left = 0.0
-	top_margin.anchor_top = 0.0
-	top_margin.anchor_right = 1.0
-	top_margin.anchor_bottom = 0.0
-	top_margin.offset_bottom = 86.0
-	top_margin.add_theme_constant_override("margin_left", 28)
-	top_margin.add_theme_constant_override("margin_right", 28)
-	top_margin.add_theme_constant_override("margin_top", 22)
-	top_margin.mouse_filter = Control.MOUSE_FILTER_PASS
-	_root.add_child(top_margin)
+	_top_margin = MarginContainer.new()
+	_top_margin.anchor_left = 0.0
+	_top_margin.anchor_top = 0.0
+	_top_margin.anchor_right = 1.0
+	_top_margin.anchor_bottom = 0.0
+	_top_margin.offset_bottom = 86.0
+	_top_margin.add_theme_constant_override("margin_left", 28)
+	_top_margin.add_theme_constant_override("margin_right", 28)
+	_top_margin.add_theme_constant_override("margin_top", 22)
+	_top_margin.mouse_filter = Control.MOUSE_FILTER_PASS
+	_root.add_child(_top_margin)
 
 	var top_row: HBoxContainer = HBoxContainer.new()
 	top_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	top_margin.add_child(top_row)
+	_top_margin.add_child(top_row)
 
 	_chapter_label = Label.new()
 	_chapter_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -239,34 +244,34 @@ func _build_ui() -> void:
 	top_row.add_child(_skip_button)
 
 	# Bottom gradient bar
-	var bot_grad: TextureRect = TextureRect.new()
-	bot_grad.anchor_left = 0.0
-	bot_grad.anchor_top = 1.0
-	bot_grad.anchor_right = 1.0
-	bot_grad.anchor_bottom = 1.0
-	bot_grad.offset_top = -230.0
-	bot_grad.texture = _make_vertical_gradient(Color(0.02, 0.04, 0.08, 0.0), Color(0.02, 0.04, 0.08, 0.94))
-	bot_grad.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	bot_grad.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_root.add_child(bot_grad)
+	_bot_grad = TextureRect.new()
+	_bot_grad.anchor_left = 0.0
+	_bot_grad.anchor_top = 1.0
+	_bot_grad.anchor_right = 1.0
+	_bot_grad.anchor_bottom = 1.0
+	_bot_grad.offset_top = -230.0
+	_bot_grad.texture = _make_vertical_gradient(Color(0.02, 0.04, 0.08, 0.0), Color(0.02, 0.04, 0.08, 0.94))
+	_bot_grad.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_bot_grad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(_bot_grad)
 
-	var bot_margin: MarginContainer = MarginContainer.new()
-	bot_margin.anchor_left = 0.0
-	bot_margin.anchor_top = 1.0
-	bot_margin.anchor_right = 1.0
-	bot_margin.anchor_bottom = 1.0
-	bot_margin.offset_top = -188.0
-	bot_margin.add_theme_constant_override("margin_left", 42)
-	bot_margin.add_theme_constant_override("margin_right", 42)
-	bot_margin.add_theme_constant_override("margin_bottom", 26)
-	bot_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_root.add_child(bot_margin)
+	_bot_margin = MarginContainer.new()
+	_bot_margin.anchor_left = 0.0
+	_bot_margin.anchor_top = 1.0
+	_bot_margin.anchor_right = 1.0
+	_bot_margin.anchor_bottom = 1.0
+	_bot_margin.offset_top = -188.0
+	_bot_margin.add_theme_constant_override("margin_left", 42)
+	_bot_margin.add_theme_constant_override("margin_right", 42)
+	_bot_margin.add_theme_constant_override("margin_bottom", 26)
+	_bot_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(_bot_margin)
 
 	var bot_col: VBoxContainer = VBoxContainer.new()
 	bot_col.alignment = BoxContainer.ALIGNMENT_END
 	bot_col.add_theme_constant_override("separation", 14)
 	bot_col.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bot_margin.add_child(bot_col)
+	_bot_margin.add_child(bot_col)
 
 	_caption_label = Label.new()
 	_caption_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -295,6 +300,31 @@ func _build_ui() -> void:
 	_next_prompt.add_theme_color_override("font_color", Color(0.74, 0.93, 0.96, 0.88))
 	_next_prompt.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	footer_row.add_child(_next_prompt)
+
+	apply_safe_area(_safe_insets)
+
+
+func apply_safe_area(insets: Rect2) -> void:
+	_safe_insets = insets
+	var left_in: int = maxi(0, roundi(insets.position.x))
+	var top_in: int = maxi(0, roundi(insets.position.y))
+	var right_in: int = maxi(0, roundi(insets.size.x))
+	var bottom_in: int = maxi(0, roundi(insets.size.y))
+
+	if _top_grad != null:
+		_top_grad.offset_bottom = 116.0 + float(top_in)
+	if _top_margin != null:
+		_top_margin.offset_bottom = 86.0 + float(top_in)
+		_top_margin.add_theme_constant_override("margin_left", 28 + left_in)
+		_top_margin.add_theme_constant_override("margin_right", 28 + right_in)
+		_top_margin.add_theme_constant_override("margin_top", 22 + top_in)
+	if _bot_grad != null:
+		_bot_grad.offset_top = -(230.0 + float(bottom_in))
+	if _bot_margin != null:
+		_bot_margin.offset_top = -(188.0 + float(bottom_in))
+		_bot_margin.add_theme_constant_override("margin_left", 42 + left_in)
+		_bot_margin.add_theme_constant_override("margin_right", 42 + right_in)
+		_bot_margin.add_theme_constant_override("margin_bottom", 26 + bottom_in)
 
 
 func _make_vertical_gradient(top_col: Color, bot_col: Color) -> GradientTexture2D:
@@ -407,13 +437,22 @@ func _update_ken_burns(t_sec: float) -> void:
 	var frac: float = clampf(t_sec / 6.5, 0.0, 1.0)
 	var ease_frac: float = frac * frac * (3.0 - 2.0 * frac)
 
-	var z_from: float = float(slide.get("zoom_from", 1.04))
-	var z_to: float = float(slide.get("zoom_to", 1.16))
 	var p_from: Vector2 = slide.get("pan_from", Vector2.ZERO) as Vector2
 	var p_to: Vector2 = slide.get("pan_to", Vector2.ZERO) as Vector2
+	var has_pan: bool = p_from.length_squared() > 0.01 or p_to.length_squared() > 0.01
+	var min_zoom: float = 1.08 if has_pan else 1.0
 
-	var zoom_val: float = lerpf(z_from, z_to, ease_frac)
+	var z_from: float = maxf(float(slide.get("zoom_from", 1.08)), min_zoom)
+	var z_to: float = maxf(float(slide.get("zoom_to", 1.18)), min_zoom)
+
+	var zoom_val: float = maxf(lerpf(z_from, z_to, ease_frac), min_zoom)
 	var pan_val: Vector2 = p_from.lerp(p_to, ease_frac)
+
+	var max_pan: Vector2 = (_art_rect.size * maxf(0.0, zoom_val - 1.0)) * 0.5
+	pan_val = Vector2(
+		clampf(pan_val.x, -max_pan.x, max_pan.x),
+		clampf(pan_val.y, -max_pan.y, max_pan.y)
+	)
 
 	_art_rect.pivot_offset = _art_rect.size * 0.5
 	_art_rect.scale = Vector2(zoom_val, zoom_val)

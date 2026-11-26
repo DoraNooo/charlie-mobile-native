@@ -1,10 +1,20 @@
 # Godot 4 ignores
 .godot/
 *.translation
-export_presets.cfg
+
+# Build outputs
+build/
+dist/
 *.aab
 *.apk
 *.ipa
+
+# Signing secrets & certificates (NEVER commit)
 *.keystore
 *.jks
+*.p12
+*.mobileprovision
+*.cer
+
+# OS files
 .DS_Store

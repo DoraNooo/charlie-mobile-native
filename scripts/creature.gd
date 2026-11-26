@@ -497,7 +497,7 @@ func _draw_helicopter(r: float, col: Color, acc: Color) -> void:
 	draw_circle(Vector2(r * 0.10, 0.0), r * 0.92, Color(acc.r, acc.g, acc.b, 0.14))
 	var rotor_ang: float = phase * 18.0
 	for i: int in range(2):
-		var a: float = rotor_ang + float(i) * HALF_PI
+		var a: float = rotor_ang + float(i) * (PI * 0.5)
 		var tip: Vector2 = Vector2.from_angle(a) * (r * 0.92)
 		draw_line(Vector2(r * 0.10, 0.0) - tip, Vector2(r * 0.10, 0.0) + tip, Color(0.92, 0.96, 1.0, 0.78), maxf(1.8, r * 0.09), true)
 	draw_circle(Vector2(r * 0.10, 0.0), r * 0.12, Color(0.20, 0.24, 0.30))

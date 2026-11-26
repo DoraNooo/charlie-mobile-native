@@ -31,7 +31,7 @@ func _process(delta: float) -> void:
 		queue_redraw()
 
 
-func reset_stick() -> void:
+func reset_touch() -> void:
 	_touch_index = -1
 	is_active = false
 	_knob_offset = Vector2.ZERO
@@ -39,10 +39,14 @@ func reset_stick() -> void:
 	queue_redraw()
 
 
+func reset_stick() -> void:
+	reset_touch()
+
+
 func _input(event: InputEvent) -> void:
 	if not is_visible_in_tree():
-		if is_active:
-			reset_stick()
+		if is_active or _touch_index != -1:
+			reset_touch()
 		return
 
 	if event is InputEventScreenTouch:

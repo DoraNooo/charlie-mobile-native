@@ -396,7 +396,7 @@ func _draw_face(canvas: CanvasItem) -> void:
 		mouth_pts.append(Vector2(mouth_center.x - mw, top_y))
 		mouth_pts.append(Vector2(mouth_center.x + mw, top_y))
 		var steps: int = 12
-		for s: int in range(steps + 1):
+		for s: int in range(1, steps):
 			var t: float = float(s) / float(steps)
 			var ang: float = t * PI
 			var px: float = mouth_center.x + cos(ang) * mw

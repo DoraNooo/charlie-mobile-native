@@ -141,7 +141,7 @@ const SCALES: Array[Dictionary] = [
 
 
 func size_to_progress(world_size: float) -> float:
-	var ratio: float = max(1.0, world_size / BASE_SIZE)
+	var ratio: float = maxf(1.0, world_size / BASE_SIZE)
 	return log(ratio) / log(SCALE_FACTOR)
 
 

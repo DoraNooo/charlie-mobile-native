@@ -7,17 +7,51 @@ extends Node
 const MIX_RATE: float = 24000.0
 const BUFFER_LENGTH: float = 0.085
 const MAX_VOICES: int = 24
+const DUCKED_GAIN: float = 0.35
 const PENTATONIC_RATIOS: Array[float] = [1.0, 1.125, 1.25, 1.5, 1.6667, 2.0, 2.25, 2.5, 3.0]
+const COMBO_RATIOS: Array[float] = [1.0, 1.125, 1.25, 1.40625, 1.5, 1.6875, 2.0]
+
+enum VoiceKind {
+	KALIMBA = 0,
+	ORGANIC_POP = 1,
+	WOBBLE = 2,
+	WHOOSH = 3,
+	HEARTBEAT = 4,
+}
+
+
+class Voice:
+	var kind: int = VoiceKind.KALIMBA
+	var t: float = 0.0
+	var dur: float = 0.5
+	var inv_dur: float = 2.0
+	var freq: float = 440.0
+	var freq_end: float = 440.0
+	var amp: float = 0.15
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	var inv_attack: float = 166.6667
+	var decay: float = 5.0
+	var noise_gain: float = 0.0
+	var pan: float = 0.5
+	var pan_l: float = 0.825
+	var pan_r: float = 0.825
+
 
 var _player: AudioStreamPlayer = null
 var _playback: AudioStreamGeneratorPlayback = null
 var _muted: bool = false
+var _app_paused: bool = false
+var _ducked: bool = false
+var _target_gain: float = 1.0
+var _output_gain: float = 1.0
 var _scale_index: int = 0
 
-var _voices: Array[Dictionary] = []
+var _voices: Array[Voice] = []
 var _chime_timer: float = 0.6
 var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var _last_note_idx: int = 2
+var _voice_seq: int = 0
 
 
 func _ready() -> void:
@@ -39,6 +73,9 @@ func set_muted(m: bool) -> void:
 	_muted = m
 	if _player != null:
 		_player.stream_paused = _muted
+		if not _muted and not _app_paused and not _player.playing:
+			_player.play()
+			_playback = _player.get_stream_playback() as AudioStreamGeneratorPlayback
 	if _muted:
 		_voices.clear()
 
@@ -52,6 +89,28 @@ func is_muted() -> bool:
 	return _muted
 
 
+func set_ducked(ducked: bool) -> void:
+	_ducked = ducked
+	_target_gain = DUCKED_GAIN if ducked else 1.0
+
+
+func set_app_paused(paused: bool) -> void:
+	if _app_paused == paused:
+		return
+	_app_paused = paused
+	if _player == null:
+		return
+	if _app_paused:
+		_player.stop()
+		_playback = null
+		_voices.clear()
+	else:
+		if not _muted:
+			_player.stream_paused = false
+			_player.play()
+			_playback = _player.get_stream_playback() as AudioStreamGeneratorPlayback
+
+
 func set_scale_index(idx: int) -> void:
 	_scale_index = clampi(idx, 0, Scales.NUM_SCALES - 1)
 
@@ -62,7 +121,17 @@ func _get_scale_root() -> float:
 
 
 func _process(delta: float) -> void:
-	if _muted or _playback == null:
+	if _muted or _app_paused or _player == null:
+		return
+
+	# Recover automatically from iOS/Android audio session interruptions
+	if not _player.playing:
+		_player.play()
+		_playback = _player.get_stream_playback() as AudioStreamGeneratorPlayback
+	elif _playback == null:
+		_playback = _player.get_stream_playback() as AudioStreamGeneratorPlayback
+
+	if _playback == null:
 		return
 
 	# Gentle ambient pentatonic kalimba melody (airy, light, zero bass drone)
@@ -72,6 +141,50 @@ func _process(delta: float) -> void:
 		_spawn_ambient_kalimba()
 
 	_fill_audio_buffer()
+
+
+func _next_pan() -> float:
+	_voice_seq += 1
+	return 0.5 + 0.15 * sin(float(_voice_seq) * 1.7)
+
+
+func _create_voice(
+	kind: int,
+	start_t: float,
+	dur: float,
+	freq: float,
+	freq_end: float,
+	amp: float,
+	attack: float,
+	decay: float,
+	noise_gain: float,
+	pan: float = -1.0
+) -> Voice:
+	var v: Voice = Voice.new()
+	v.kind = kind
+	v.t = start_t
+	v.dur = maxf(0.005, dur)
+	v.inv_dur = 1.0 / v.dur
+	v.freq = freq
+	v.freq_end = freq_end
+	v.amp = amp
+	v.phase = 0.0
+	v.phase2 = 0.0
+	v.inv_attack = 1.0 / maxf(0.001, attack)
+	v.decay = decay
+	v.noise_gain = noise_gain
+	v.pan = clampf(_next_pan() if pan < 0.0 else pan, 0.0, 1.0)
+	v.pan_l = 1.0 - v.pan * 0.35
+	v.pan_r = 0.65 + v.pan * 0.35
+	return v
+
+
+func _add_voice(v: Voice) -> void:
+	if _muted or _app_paused:
+		return
+	if _voices.size() >= MAX_VOICES:
+		_voices.pop_front()
+	_voices.append(v)
 
 
 func _spawn_ambient_kalimba() -> void:
@@ -84,197 +197,214 @@ func _spawn_ambient_kalimba() -> void:
 	var base_freq: float = root * PENTATONIC_RATIOS[_last_note_idx]
 	if base_freq < 260.0:
 		base_freq *= 2.0
-	_add_voice({
-		"kind": "kalimba",
-		"age": 0.0,
-		"duration": _rng.randf_range(0.85, 1.45),
-		"freq": base_freq,
-		"freq_end": base_freq,
-		"gain": 0.11,
-		"phase": 0.0,
-		"phase2": 0.0,
-		"attack": 0.008,
-		"decay": 4.2,
-		"noise_gain": 0.02,
-	})
+	_add_voice(_create_voice(
+		VoiceKind.KALIMBA,
+		0.0,
+		_rng.randf_range(0.85, 1.45),
+		base_freq,
+		base_freq,
+		0.11,
+		0.008,
+		4.2,
+		0.02
+	))
 
 
-func _add_voice(v: Dictionary) -> void:
-	if _muted:
-		return
-	if _voices.size() >= MAX_VOICES:
-		_voices.pop_front()
-	_voices.append(v)
-
-
-func play_chomp(pitch_mult: float = 1.0) -> void:
-	var p: float = clampf(pitch_mult, 0.7, 1.6)
-	_add_voice({
-		"kind": "organic_pop",
-		"age": 0.0,
-		"duration": 0.14,
-		"freq": 320.0 * p,
-		"freq_end": 780.0 * p,
-		"gain": 0.30,
-		"phase": 0.0,
-		"phase2": 0.0,
-		"attack": 0.004,
-		"decay": 18.0,
-		"noise_gain": 0.10,
-	})
-	_add_voice({
-		"kind": "kalimba",
-		"age": 0.0,
-		"duration": 0.24,
-		"freq": 540.0 * p,
-		"freq_end": 620.0 * p,
-		"gain": 0.14,
-		"phase": 0.0,
-		"phase2": 0.0,
-		"attack": 0.005,
-		"decay": 11.0,
-		"noise_gain": 0.0,
-	})
+func play_chomp(combo_step: int = 0) -> void:
+	var step_idx: int = clampi(combo_step, 0, COMBO_RATIOS.size() - 1)
+	var p: float = COMBO_RATIOS[step_idx]
+	_add_voice(_create_voice(
+		VoiceKind.ORGANIC_POP,
+		0.0,
+		0.14,
+		320.0 * p,
+		780.0 * p,
+		0.30,
+		0.004,
+		18.0,
+		0.10
+	))
+	_add_voice(_create_voice(
+		VoiceKind.KALIMBA,
+		0.0,
+		0.24,
+		540.0 * p,
+		620.0 * p,
+		0.14,
+		0.005,
+		11.0,
+		0.0
+	))
 
 
 func play_hurt() -> void:
-	_add_voice({
-		"kind": "wobble",
-		"age": 0.0,
-		"duration": 0.30,
-		"freq": 280.0,
-		"freq_end": 110.0,
-		"gain": 0.32,
-		"phase": 0.0,
-		"phase2": 0.0,
-		"attack": 0.006,
-		"decay": 8.5,
-		"noise_gain": 0.14,
-	})
+	_add_voice(_create_voice(
+		VoiceKind.WOBBLE,
+		0.0,
+		0.30,
+		280.0,
+		110.0,
+		0.32,
+		0.006,
+		8.5,
+		0.14
+	))
 
 
 func play_spit(level: int = 1) -> void:
 	var lvl_boost: float = 1.0 + float(clampi(level, 1, 3) - 1) * 0.16
-	_add_voice({
-		"kind": "organic_pop",
-		"age": 0.0,
-		"duration": 0.19,
-		"freq": 460.0 * lvl_boost,
-		"freq_end": 180.0,
-		"gain": 0.26,
-		"phase": 0.0,
-		"phase2": 0.0,
-		"attack": 0.005,
-		"decay": 13.0,
-		"noise_gain": 0.16,
-	})
+	_add_voice(_create_voice(
+		VoiceKind.ORGANIC_POP,
+		0.0,
+		0.19,
+		460.0 * lvl_boost,
+		180.0,
+		0.26,
+		0.005,
+		13.0,
+		0.16
+	))
 
 
 func play_shrink() -> void:
-	_add_voice({
-		"kind": "kalimba",
-		"age": 0.0,
-		"duration": 0.28,
-		"freq": 680.0,
-		"freq_end": 340.0,
-		"gain": 0.22,
-		"phase": 0.0,
-		"phase2": 0.0,
-		"attack": 0.005,
-		"decay": 9.5,
-		"noise_gain": 0.04,
-	})
+	_add_voice(_create_voice(
+		VoiceKind.KALIMBA,
+		0.0,
+		0.28,
+		680.0,
+		340.0,
+		0.22,
+		0.005,
+		9.5,
+		0.04
+	))
 
 
 func play_dash(level: int = 1) -> void:
 	var base: float = 240.0 + float(clampi(level, 1, 3)) * 55.0
-	_add_voice({
-		"kind": "whoosh",
-		"age": 0.0,
-		"duration": 0.28,
-		"freq": base,
-		"freq_end": base * 2.2,
-		"gain": 0.28,
-		"phase": 0.0,
-		"phase2": 0.0,
-		"attack": 0.012,
-		"decay": 9.0,
-		"noise_gain": 0.18,
-	})
+	_add_voice(_create_voice(
+		VoiceKind.WHOOSH,
+		0.0,
+		0.28,
+		base,
+		base * 2.2,
+		0.28,
+		0.012,
+		9.0,
+		0.18
+	))
 
 
 func play_heal() -> void:
 	var root: float = maxf(320.0, _get_scale_root() * 1.5)
 	var notes: Array[float] = [root, root * 1.25, root * 1.5]
-	for i in range(notes.size()):
-		_add_voice({
-			"kind": "kalimba",
-			"age": -float(i) * 0.065,
-			"duration": 0.45,
-			"freq": notes[i],
-			"freq_end": notes[i],
-			"gain": 0.20,
-			"phase": 0.0,
-			"phase2": 0.0,
-			"attack": 0.006,
-			"decay": 6.0,
-			"noise_gain": 0.0,
-		})
+	for i: int in range(notes.size()):
+		_add_voice(_create_voice(
+			VoiceKind.KALIMBA,
+			-float(i) * 0.065,
+			0.45,
+			notes[i],
+			notes[i],
+			0.20,
+			0.006,
+			6.0,
+			0.0
+		))
 
 
 func play_scale_up() -> void:
 	var root: float = maxf(300.0, _get_scale_root() * 1.25)
 	var ratios: Array[float] = [1.0, 1.25, 1.5, 2.0, 2.5]
-	for i in range(ratios.size()):
-		_add_voice({
-			"kind": "kalimba",
-			"age": -float(i) * 0.07,
-			"duration": 0.85,
-			"freq": root * ratios[i],
-			"freq_end": root * ratios[i],
-			"gain": 0.18,
-			"phase": 0.0,
-			"phase2": 0.0,
-			"attack": 0.008,
-			"decay": 4.0,
-			"noise_gain": 0.01,
-		})
+	for i: int in range(ratios.size()):
+		_add_voice(_create_voice(
+			VoiceKind.KALIMBA,
+			-float(i) * 0.07,
+			0.85,
+			root * ratios[i],
+			root * ratios[i],
+			0.18,
+			0.008,
+			4.0,
+			0.01
+		))
 
 
 func play_chime(pitch_mult: float = 1.0) -> void:
 	var freq: float = maxf(360.0, _get_scale_root() * 1.5) * clampf(pitch_mult, 0.6, 2.0)
-	_add_voice({
-		"kind": "kalimba",
-		"age": 0.0,
-		"duration": 0.55,
-		"freq": freq,
-		"freq_end": freq,
-		"gain": 0.18,
-		"phase": 0.0,
-		"phase2": 0.0,
-		"attack": 0.006,
-		"decay": 5.5,
-		"noise_gain": 0.01,
-	})
+	_add_voice(_create_voice(
+		VoiceKind.KALIMBA,
+		0.0,
+		0.55,
+		freq,
+		freq,
+		0.18,
+		0.006,
+		5.5,
+		0.01
+	))
+
+
+func play_predator_pulse() -> void:
+	# Soft double-thump heartbeat for nearby predator danger
+	_add_voice(_create_voice(
+		VoiceKind.HEARTBEAT,
+		0.0,
+		0.16,
+		84.0,
+		52.0,
+		0.22,
+		0.010,
+		14.0,
+		0.0,
+		0.5
+	))
+	_add_voice(_create_voice(
+		VoiceKind.HEARTBEAT,
+		-0.13,
+		0.18,
+		72.0,
+		46.0,
+		0.15,
+		0.012,
+		12.5,
+		0.0,
+		0.5
+	))
+
+
+func play_power_evolve() -> void:
+	# Sparkling ascending triad + octave chime for power upgrades (Nv.2 / Nv.3)
+	var root: float = maxf(380.0, _get_scale_root() * 1.5)
+	var ratios: Array[float] = [1.0, 1.25, 1.5, 2.0]
+	for i: int in range(ratios.size()):
+		_add_voice(_create_voice(
+			VoiceKind.KALIMBA,
+			-float(i) * 0.055,
+			0.68,
+			root * ratios[i],
+			root * ratios[i],
+			0.19,
+			0.005,
+			4.5,
+			0.01
+		))
 
 
 func play_victory() -> void:
 	var root: float = 392.0 # G4 bright cosmic sparkle
 	var melody: Array[float] = [1.0, 1.125, 1.25, 1.5, 2.0, 2.25, 2.5, 3.0]
-	for i in range(melody.size()):
-		_add_voice({
-			"kind": "kalimba",
-			"age": -float(i) * 0.09,
-			"duration": 1.1,
-			"freq": root * melody[i],
-			"freq_end": root * melody[i],
-			"gain": 0.17,
-			"phase": 0.0,
-			"phase2": 0.0,
-			"attack": 0.008,
-			"decay": 3.4,
-			"noise_gain": 0.01,
-		})
+	for i: int in range(melody.size()):
+		_add_voice(_create_voice(
+			VoiceKind.KALIMBA,
+			-float(i) * 0.09,
+			1.1,
+			root * melody[i],
+			root * melody[i],
+			0.17,
+			0.008,
+			3.4,
+			0.01
+		))
 
 
 func _fill_audio_buffer() -> void:
@@ -283,68 +413,66 @@ func _fill_audio_buffer() -> void:
 		return
 
 	var inv_sr: float = 1.0 / MIX_RATE
+	var tau_inv_sr: float = TAU * inv_sr
+	var gain_alpha: float = 1.0 - exp(-12.0 * inv_sr)
 	var frames: PackedVector2Array = PackedVector2Array()
 	frames.resize(frames_available)
 
-	for i in range(frames_available):
+	for i: int in range(frames_available):
+		_output_gain += (_target_gain - _output_gain) * gain_alpha
 		var sample_l: float = 0.0
 		var sample_r: float = 0.0
 
 		var idx: int = _voices.size() - 1
 		while idx >= 0:
-			var v: Dictionary = _voices[idx]
-			var age: float = float(v["age"]) + inv_sr
-			v["age"] = age
+			var v: Voice = _voices[idx]
+			var age: float = v.t + inv_sr
+			v.t = age
 			if age < 0.0:
 				idx -= 1
 				continue
 
-			var dur: float = float(v["duration"])
-			if age >= dur:
+			if age >= v.dur:
 				_voices.remove_at(idx)
 				idx -= 1
 				continue
 
-			var t: float = age / dur
-			var attack: float = maxf(0.001, float(v["attack"]))
-			var env: float = minf(1.0, age / attack) * exp(-age * float(v["decay"]))
-			var freq: float = lerpf(float(v["freq"]), float(v["freq_end"]), t)
-			var phase: float = float(v["phase"]) + TAU * freq * inv_sr
+			var norm_t: float = age * v.inv_dur
+			var env: float = minf(1.0, age * v.inv_attack) * exp(-age * v.decay)
+			var freq: float = v.freq + (v.freq_end - v.freq) * norm_t
+			var phase: float = v.phase + freq * tau_inv_sr
 			if phase > TAU:
 				phase -= TAU
-			v["phase"] = phase
+			v.phase = phase
 
 			var sig: float = 0.0
-			var kind: String = String(v["kind"])
-			if kind == "kalimba":
+			var kind: int = v.kind
+			if kind == VoiceKind.KALIMBA:
 				# Warm fundamental + subtle bell-like 2.756x metallic tine overtone
-				var phase2: float = float(v["phase2"]) + TAU * (freq * 2.756) * inv_sr
+				var phase2: float = v.phase2 + (freq * 2.756) * tau_inv_sr
 				if phase2 > TAU:
 					phase2 -= TAU
-				v["phase2"] = phase2
-				var overtone_env: float = exp(-age * 18.0)
-				sig = sin(phase) + 0.24 * sin(phase2) * overtone_env
-			elif kind == "organic_pop":
+				v.phase2 = phase2
+				sig = sin(phase) + 0.24 * sin(phase2) * exp(-age * 18.0)
+			elif kind == VoiceKind.ORGANIC_POP:
 				sig = sin(phase) + 0.35 * sin(phase * 2.0)
-			elif kind == "wobble":
+			elif kind == VoiceKind.WOBBLE:
 				var lfo: float = 1.0 + 0.14 * sin(age * 46.0)
 				sig = sin(phase * lfo) * 0.85
+			elif kind == VoiceKind.HEARTBEAT:
+				sig = sin(phase) * 0.92 + 0.18 * sin(phase * 2.0)
 			else:
 				sig = sin(phase) * 0.7
 
-			var n_gain: float = float(v["noise_gain"])
-			if n_gain > 0.0:
-				var noise_env: float = exp(-age * 24.0)
-				sig += (_rng.randf() * 2.0 - 1.0) * n_gain * noise_env
+			if v.noise_gain > 0.0:
+				sig += (_rng.randf() * 2.0 - 1.0) * v.noise_gain * exp(-age * 24.0)
 
-			var out_s: float = sig * env * float(v["gain"])
-			# Gentle stereo shimmer by voice index
-			var pan: float = 0.5 + 0.15 * sin(float(idx) * 1.7)
-			sample_l += out_s * (1.0 - pan * 0.35)
-			sample_r += out_s * (0.65 + pan * 0.35)
+			var out_s: float = sig * env * v.amp
+			sample_l += out_s * v.pan_l
+			sample_r += out_s * v.pan_r
 			idx -= 1
 
-		# Soft saturating limiter so multiple overlapping chimes/SFX stay clean
-		frames[i] = Vector2(tanh(sample_l), tanh(sample_r))
+		# Soft saturating limiter with smooth master ducking gain
+		frames[i] = Vector2(tanh(sample_l * _output_gain), tanh(sample_r * _output_gain))
 
 	_playback.push_buffer(frames)
