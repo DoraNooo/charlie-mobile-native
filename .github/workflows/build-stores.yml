@@ -113,6 +113,7 @@ jobs:
           mkdir -p android/build
           unzip -oq ~/.local/share/godot/export_templates/"${GODOT_TEMPLATES_DIR_NAME}"/android_source.zip -d android/build
           touch android/build/.gdignore
+          printf '%s\n' "${GODOT_TEMPLATES_DIR_NAME}" > android/.build_version
 
       - name: Configure Godot Android SDK & keystores
         env:
