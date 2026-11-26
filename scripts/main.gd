@@ -12,6 +12,10 @@ const FONT_UI_PATH: String = "res://assets/fonts/Outfit.ttf"
 const COMBO_WINDOW: float = 1.9
 const MAX_COMBO: int = 6
 const PASSIVE_HEAL_SECONDS: float = 8.0
+const DIRECT_TOUCH_DEADZONE: float = 18.0
+const DIRECT_TOUCH_FULL_RADIUS: float = 110.0
+const MAX_TRAIL_DOTS: int = 18
+const TRAIL_SPAWN_INTERVAL: float = 0.045
 
 enum GameState {
 	TITLE,
@@ -57,11 +61,14 @@ var _vfx_time: float = 0.0
 var _title_swim_time: float = 0.0
 var _predator_pulse_timer: float = 0.0
 var _safe_insets: Rect2 = Rect2()
+var _direct_touch_index: int = -1
+var _direct_touch_pos: Vector2 = Vector2.ZERO
 
 # Typography, theme & shared additive glow texture
 var _font_display: Font = null
 var _font_ui: Font = null
 var _font_ui_bold: Font = null
+var _font_ui_tracked: Font = null
 var _ui_theme: Theme = null
 var _glow_tex: GradientTexture2D = null
 
@@ -76,11 +83,13 @@ var _vfx_layer: _WorldVfxLayer = null
 var _audio: AudioEngine = null
 var _cutscenes: CutscenePlayer = null
 
-# World VFX state (lava spit projectiles, shockwaves, chomp/heal bursts, molten embers, scale warp veil)
+# World VFX state (lava spit projectiles, shockwaves, chomp/heal bursts, molten embers, swim trail, scale warp veil)
 var _projectiles: Array[Dictionary] = []
 var _shockwaves: Array[Dictionary] = []
 var _bursts: Array[Dictionary] = []
 var _embers: Array[Dictionary] = []
+var _trail_dots: Array[Dictionary] = []
+var _trail_spawn_cd: float = 0.0
 var _warp_flash_life: float = 0.0
 var _warp_flash_max: float = 0.85
 var _warp_origin: Vector2 = Vector2.ZERO
@@ -91,6 +100,7 @@ var _vfx_was_active: bool = false
 var _hud_layer: CanvasLayer = null
 var _danger_vignette: _DangerVignette = null
 var _hud_root: Control = null
+var _touch_target_overlay: _TouchTargetOverlay = null
 var _top_margin: MarginContainer = null
 var _scale_label: Label = null
 var _size_label: Label = null
@@ -180,6 +190,78 @@ class _DangerVignette:
 			if _mat != null:
 				_mat.set_shader_parameter("intensity", intensity)
 			visible = intensity > 0.004
+
+
+class _TouchTargetOverlay:
+	extends Control
+	## Lightweight screen-space overlay drawing a sleek luminous target ring
+	## at the player's direct-touch steering position.
+	var target_pos: Vector2 = Vector2.ZERO
+	var active: bool = false
+	var glow_tex: Texture2D = null
+
+	var _alpha: float = 0.0
+	var _pulse_time: float = 0.0
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		visible = false
+
+	func set_target(pos: Vector2, is_now_active: bool) -> void:
+		target_pos = pos
+		active = is_now_active
+		if active:
+			visible = true
+			queue_redraw()
+
+	func release() -> void:
+		active = false
+
+	func clear_immediate() -> void:
+		active = false
+		_alpha = 0.0
+		visible = false
+		queue_redraw()
+
+	func _process(delta: float) -> void:
+		var dt: float = clampf(delta, 0.0, 0.05)
+		var goal: float = 1.0 if active else 0.0
+		if active or _alpha > 0.005:
+			_pulse_time += dt
+			var rate: float = 18.0 if active else 12.0
+			_alpha = lerpf(_alpha, goal, 1.0 - exp(-dt * rate))
+			if not active and _alpha <= 0.005:
+				_alpha = 0.0
+				visible = false
+			else:
+				visible = true
+			queue_redraw()
+
+	func _draw() -> void:
+		if _alpha <= 0.005:
+			return
+		var a: float = _alpha
+		var pulse: float = 0.5 + 0.5 * sin(_pulse_time * 5.2)
+		var outer_r: float = 27.0 + pulse * 3.5
+		var inner_r: float = 15.0 + pulse * 1.2
+
+		# Soft warm coral-gold radial glow
+		if glow_tex != null:
+			var halo_r: float = outer_r * 1.65
+			draw_texture_rect(
+				glow_tex,
+				Rect2(target_pos - Vector2(halo_r, halo_r), Vector2(halo_r * 2.0, halo_r * 2.0)),
+				false,
+				Color(1.0, 0.70, 0.38, 0.30 * a)
+			)
+
+		# Subtle pulsing outer ring
+		draw_arc(target_pos, outer_r, 0.0, TAU, 36, Color(1.0, 0.78, 0.46, 0.34 * a), 2.4, true)
+		# Crisp inner luminous ring
+		draw_arc(target_pos, inner_r, 0.0, TAU, 32, Color(1.0, 0.95, 0.82, 0.78 * a), 1.8, true)
+		# Warm core dot
+		draw_circle(target_pos, 3.4, Color(1.0, 0.96, 0.86, 0.88 * a))
 
 
 class _ScaleTicksOverlay:
@@ -454,6 +536,10 @@ func _setup_fonts_and_vfx_resources() -> void:
 		var ui_base: Font = load(FONT_UI_PATH) as Font
 		_font_ui = _make_font_variation(ui_base, 450)
 		_font_ui_bold = _make_font_variation(ui_base, 650)
+		var tracked: FontVariation = _make_font_variation(ui_base, 650) as FontVariation
+		if tracked != null:
+			tracked.spacing_glyph = 3
+			_font_ui_tracked = tracked
 
 	_ui_theme = Theme.new()
 	if _font_ui != null:
@@ -517,12 +603,20 @@ func _compute_safe_area_insets() -> Rect2:
 	var safe: Rect2i = DisplayServer.get_display_safe_area()
 	if safe.size.x <= 0 or safe.size.y <= 0:
 		return Rect2()
+	# Intersect display safe area with actual window rect so windowed desktop & fullscreen mobile both map accurately
+	# under stretch/mode="viewport" (1280x720 expand) and canvas_items alike.
+	var win_rect: Rect2i = Rect2i(DisplayServer.window_get_position(), win_size)
+	var clipped: Rect2i = win_rect.intersection(safe)
+	if clipped.size.x <= 0 or clipped.size.y <= 0:
+		return Rect2()
 	var sx: float = vp_size.x / float(win_size.x)
 	var sy: float = vp_size.y / float(win_size.y)
-	var inset_left: float = maxf(0.0, float(safe.position.x) * sx)
-	var inset_top: float = maxf(0.0, float(safe.position.y) * sy)
-	var inset_right: float = maxf(0.0, float(win_size.x - (safe.position.x + safe.size.x)) * sx)
-	var inset_bottom: float = maxf(0.0, float(win_size.y - (safe.position.y + safe.size.y)) * sy)
+	var max_hx: float = vp_size.x * 0.25
+	var max_vy: float = vp_size.y * 0.25
+	var inset_left: float = clampf(float(clipped.position.x - win_rect.position.x) * sx, 0.0, max_hx)
+	var inset_top: float = clampf(float(clipped.position.y - win_rect.position.y) * sy, 0.0, max_vy)
+	var inset_right: float = clampf(float((win_rect.position.x + win_rect.size.x) - (clipped.position.x + clipped.size.x)) * sx, 0.0, max_hx)
+	var inset_bottom: float = clampf(float((win_rect.position.y + win_rect.size.y) - (clipped.position.y + clipped.size.y)) * sy, 0.0, max_vy)
 	return Rect2(inset_left, inset_top, inset_right, inset_bottom)
 
 
@@ -572,6 +666,9 @@ func _update_safe_area() -> void:
 
 
 func _reset_all_touch_inputs() -> void:
+	_direct_touch_index = -1
+	if _touch_target_overlay != null:
+		_touch_target_overlay.clear_immediate()
 	if _joystick != null:
 		_joystick.reset_touch()
 	if _spit_btn != null:
@@ -669,6 +766,12 @@ func _setup_hud() -> void:
 	if _ui_theme != null:
 		_hud_root.theme = _ui_theme
 	_hud_layer.add_child(_hud_root)
+
+	# Luminous touch target ring overlay for direct touch-anywhere steering
+	_touch_target_overlay = _TouchTargetOverlay.new()
+	_touch_target_overlay.name = "TouchTargetOverlay"
+	_touch_target_overlay.glow_tex = _glow_tex
+	_hud_root.add_child(_touch_target_overlay)
 
 	# Top bar container
 	_top_margin = MarginContainer.new()
@@ -917,7 +1020,7 @@ func _build_title_panel() -> void:
 	# Ultra-light atmospheric scrim so live swimming Charlie + quantum world shine right through!
 	var scrim: ColorRect = ColorRect.new()
 	scrim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	scrim.color = Color(0.01, 0.04, 0.08, 0.16)
+	scrim.color = Color(0.01, 0.04, 0.08, 0.12)
 	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_title_panel.add_child(scrim)
 
@@ -926,13 +1029,18 @@ func _build_title_panel() -> void:
 	_title_panel.add_child(center)
 
 	var card: PanelContainer = PanelContainer.new()
-	card.custom_minimum_size = Vector2(440.0, 0.0)
-	card.add_theme_stylebox_override("panel", _make_glass_box(24))
+	card.custom_minimum_size = Vector2(448.0, 0.0)
+	card.add_theme_stylebox_override("panel", _make_glass_box(26))
 	center.add_child(card)
 
 	var col: VBoxContainer = VBoxContainer.new()
-	col.add_theme_constant_override("separation", 15)
+	col.add_theme_constant_override("separation", 16)
 	card.add_child(col)
+
+	var header_col: VBoxContainer = VBoxContainer.new()
+	header_col.add_theme_constant_override("separation", 4)
+	header_col.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.add_child(header_col)
 
 	var title_lbl: Label = Label.new()
 	title_lbl.text = "CHARLIE"
@@ -940,27 +1048,33 @@ func _build_title_panel() -> void:
 	if _font_display != null:
 		title_lbl.add_theme_font_override("font", _font_display)
 	title_lbl.add_theme_font_size_override("font_size", 56)
-	title_lbl.add_theme_color_override("font_color", Color(1.0, 0.84, 0.56, 1.0))
-	title_lbl.add_theme_color_override("font_shadow_color", Color(0.96, 0.40, 0.24, 0.35))
-	title_lbl.add_theme_constant_override("shadow_offset_y", 3)
-	title_lbl.add_theme_constant_override("shadow_outline_size", 10)
-	col.add_child(title_lbl)
+	title_lbl.add_theme_color_override("font_color", Color("#fff5df"))
+	title_lbl.add_theme_color_override("font_shadow_color", Color(1.0, 0.44, 0.28, 0.48))
+	title_lbl.add_theme_constant_override("shadow_offset_x", 0)
+	title_lbl.add_theme_constant_override("shadow_offset_y", 4)
+	title_lbl.add_theme_constant_override("shadow_outline_size", 14)
+	header_col.add_child(title_lbl)
 
 	var sub_lbl: Label = Label.new()
-	sub_lbl.text = "De l'atome au cosmos"
+	sub_lbl.text = "DE L'ATOME AU COSMOS"
 	sub_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	if _font_display != null:
-		sub_lbl.add_theme_font_override("font", _font_display)
-	sub_lbl.add_theme_font_size_override("font_size", 20)
-	sub_lbl.add_theme_color_override("font_color", Color(0.74, 0.94, 0.96, 0.94))
-	col.add_child(sub_lbl)
+	if _font_ui_tracked != null:
+		sub_lbl.add_theme_font_override("font", _font_ui_tracked)
+	elif _font_ui_bold != null:
+		sub_lbl.add_theme_font_override("font", _font_ui_bold)
+	sub_lbl.add_theme_font_size_override("font_size", 14)
+	sub_lbl.add_theme_color_override("font_color", Color("#ffd166"))
+	sub_lbl.add_theme_color_override("font_shadow_color", Color(0.0, 0.03, 0.07, 0.65))
+	sub_lbl.add_theme_constant_override("shadow_offset_y", 2)
+	sub_lbl.add_theme_constant_override("shadow_outline_size", 4)
+	header_col.add_child(sub_lbl)
 
 	var desc_lbl: Label = Label.new()
 	desc_lbl.text = "Guide la petite Charlie, une goutte de lave aux deux petites dents, à travers 6 mondes bioluminescents."
 	desc_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	desc_lbl.add_theme_font_size_override("font_size", 15)
-	desc_lbl.add_theme_color_override("font_color", Color(0.88, 0.93, 0.97, 0.86))
+	desc_lbl.add_theme_color_override("font_color", Color(0.90, 0.94, 0.98, 0.88))
 	col.add_child(desc_lbl)
 
 	var play_btn: Button = _make_menu_button("Plonger", true)
@@ -1199,17 +1313,17 @@ func _refresh_stats_labels() -> void:
 
 func _make_glass_box(radius: int) -> StyleBoxFlat:
 	var box: StyleBoxFlat = StyleBoxFlat.new()
-	box.bg_color = Color(0.03, 0.08, 0.14, 0.78)
-	box.border_color = Color(1.0, 1.0, 1.0, 0.14)
+	box.bg_color = Color(0.035, 0.085, 0.135, 0.72)
+	box.border_color = Color(1.0, 0.90, 0.72, 0.18)
 	box.set_border_width_all(1)
 	box.set_corner_radius_all(radius)
-	box.shadow_color = Color(0.0, 0.0, 0.0, 0.45)
-	box.shadow_size = 24
-	box.shadow_offset = Vector2(0.0, 8.0)
-	box.content_margin_left = 24.0
-	box.content_margin_right = 24.0
-	box.content_margin_top = 20.0
-	box.content_margin_bottom = 20.0
+	box.shadow_color = Color(0.0, 0.02, 0.06, 0.48)
+	box.shadow_size = 28
+	box.shadow_offset = Vector2(0.0, 10.0)
+	box.content_margin_left = 30.0
+	box.content_margin_right = 30.0
+	box.content_margin_top = 26.0
+	box.content_margin_bottom = 26.0
 	return box
 
 
@@ -1365,6 +1479,40 @@ func _apply_settings_to_systems() -> void:
 	_refresh_options_ui()
 
 
+func _apply_difficulty_pill_style(btn: Button, selected: bool) -> void:
+	btn.modulate = Color.WHITE
+	var st: StyleBoxFlat = StyleBoxFlat.new()
+	st.set_corner_radius_all(20)
+	if selected:
+		st.bg_color = Color(0.98, 0.50, 0.34, 0.28)
+		st.border_color = Color(1.0, 0.80, 0.48, 0.94)
+		st.set_border_width_all(2)
+		st.shadow_color = Color(1.0, 0.52, 0.30, 0.32)
+		st.shadow_size = 10
+		st.shadow_offset = Vector2(0.0, 2.0)
+		var active_ink: Color = Color("#fff5df")
+		btn.add_theme_color_override("font_color", active_ink)
+		btn.add_theme_color_override("font_hover_color", active_ink)
+		btn.add_theme_color_override("font_pressed_color", active_ink)
+		btn.add_theme_color_override("font_focus_color", active_ink)
+	else:
+		st.bg_color = Color(0.04, 0.10, 0.17, 0.62)
+		st.border_color = Color(1.0, 1.0, 1.0, 0.12)
+		st.set_border_width_all(1)
+		btn.add_theme_color_override("font_color", Color(0.76, 0.86, 0.92, 0.80))
+		btn.add_theme_color_override("font_hover_color", Color(0.94, 0.98, 1.0, 0.95))
+		btn.add_theme_color_override("font_pressed_color", Color(0.94, 0.98, 1.0, 0.95))
+		btn.add_theme_color_override("font_focus_color", Color(0.76, 0.86, 0.92, 0.80))
+	btn.add_theme_stylebox_override("normal", st)
+	var hover: StyleBoxFlat = st.duplicate() as StyleBoxFlat
+	hover.bg_color = Color(1.0, 0.56, 0.38, 0.36) if selected else Color(0.08, 0.17, 0.26, 0.78)
+	btn.add_theme_stylebox_override("hover", hover)
+	var pressed: StyleBoxFlat = st.duplicate() as StyleBoxFlat
+	pressed.bg_color = Color(0.96, 0.46, 0.30, 0.40) if selected else Color(0.06, 0.14, 0.22, 0.86)
+	btn.add_theme_stylebox_override("pressed", pressed)
+	btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+
+
 func _refresh_options_ui() -> void:
 	if _diff_desc_label == null:
 		return
@@ -1373,7 +1521,7 @@ func _refresh_options_ui() -> void:
 	for mode_key: String in _diff_buttons.keys():
 		var btn: Button = _diff_buttons[mode_key] as Button
 		var selected: bool = (mode_key == difficulty_mode)
-		btn.modulate = Color(1.0, 0.84, 0.58, 1.0) if selected else Color(0.72, 0.82, 0.88, 0.78)
+		_apply_difficulty_pill_style(btn, selected)
 	if _bites_slider != null:
 		_bites_slider.set_value_no_signal(float(bites_per_scale))
 	if _bites_value_label != null:
@@ -1656,6 +1804,8 @@ func _reset_world_to_scale(scale_idx: int) -> void:
 	_shockwaves.clear()
 	_bursts.clear()
 	_embers.clear()
+	_trail_dots.clear()
+	_trail_spawn_cd = 0.0
 	_warp_flash_life = 0.0
 	if _vfx_was_active and _vfx_layer != null:
 		_vfx_layer.queue_redraw()
@@ -1796,7 +1946,39 @@ func _trigger_shockwave_dash() -> void:
 
 # --- Input & Main Loop ---
 
+func _is_point_on_top_hud_button(pos: Vector2) -> bool:
+	if _mute_btn != null and _mute_btn.is_visible_in_tree() and _mute_btn.get_global_rect().grow(10.0).has_point(pos):
+		return true
+	if _pause_btn != null and _pause_btn.is_visible_in_tree() and _pause_btn.get_global_rect().grow(10.0).has_point(pos):
+		return true
+	return false
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	# Direct touch-anywhere steering on playfield (events already handled by VirtualJoystick / power buttons won't arrive here)
+	if event is InputEventScreenTouch:
+		var tev: InputEventScreenTouch = event as InputEventScreenTouch
+		if tev.pressed:
+			if state == GameState.PLAYING and _direct_touch_index == -1 and not _is_point_on_top_hud_button(tev.position):
+				_direct_touch_index = tev.index
+				_direct_touch_pos = tev.position
+				if _touch_target_overlay != null:
+					_touch_target_overlay.set_target(_direct_touch_pos, true)
+		else:
+			if tev.index == _direct_touch_index:
+				_direct_touch_index = -1
+				if _touch_target_overlay != null:
+					_touch_target_overlay.release()
+		return
+
+	if event is InputEventScreenDrag:
+		var dev: InputEventScreenDrag = event as InputEventScreenDrag
+		if state == GameState.PLAYING and dev.index == _direct_touch_index:
+			_direct_touch_pos = dev.position
+			if _touch_target_overlay != null:
+				_touch_target_overlay.set_target(_direct_touch_pos, true)
+		return
+
 	if not (event is InputEventKey):
 		return
 	var kev: InputEventKey = event as InputEventKey
@@ -1837,6 +2019,17 @@ func _read_move_input() -> Vector2:
 	var vec: Vector2 = Vector2.ZERO
 	if _joystick != null and _joystick.is_active:
 		vec = _joystick.output_vector
+	elif _direct_touch_index != -1:
+		var screen_center: Vector2 = get_viewport().get_visible_rect().size * 0.5
+		var delta_px: Vector2 = _direct_touch_pos - screen_center
+		var dist_px: float = delta_px.length()
+		if dist_px > DIRECT_TOUCH_DEADZONE:
+			var strength: float = clampf(
+				(dist_px - DIRECT_TOUCH_DEADZONE) / maxf(DIRECT_TOUCH_FULL_RADIUS - DIRECT_TOUCH_DEADZONE, 1.0),
+				0.0,
+				1.0
+			)
+			vec = (delta_px / dist_px) * strength
 	else:
 		var kb: Vector2 = Vector2.ZERO
 		if Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D):
@@ -1870,6 +2063,41 @@ func _process(delta: float) -> void:
 	_update_background_shader(palette, progress)
 
 
+func _step_swim_trail(dt: float) -> void:
+	# Emit soft fading warm coral-gold glow dots when Charlie is swimming briskly or dashing
+	var speed_ratio: float = _charlie.velocity.length() / maxf(_charlie.world_size, 1.0)
+	_trail_spawn_cd -= dt
+	if _trail_spawn_cd <= 0.0 and speed_ratio > 1.5:
+		var is_fast: bool = speed_ratio > 6.2
+		_trail_spawn_cd = 0.032 if is_fast else TRAIL_SPAWN_INTERVAL
+		if _trail_dots.size() >= MAX_TRAIL_DOTS:
+			_trail_dots.pop_front()
+		var back_dir: Vector2 = -_charlie.velocity.normalized()
+		var perp: Vector2 = Vector2(-back_dir.y, back_dir.x) * randf_range(-0.24, 0.24) * _charlie.world_size
+		var spawn_pos: Vector2 = _charlie.position + back_dir * (_charlie.world_size * 0.62) + perp
+		var life: float = randf_range(0.32, 0.48) if not is_fast else randf_range(0.38, 0.56)
+		var dot_r: float = _charlie.world_size * (randf_range(0.28, 0.44) if is_fast else randf_range(0.20, 0.34))
+		_trail_dots.append({
+			"pos": spawn_pos,
+			"vel": back_dir * (_charlie.world_size * randf_range(0.25, 0.65)),
+			"radius": dot_r,
+			"life": life,
+			"max_life": life,
+			"color": Color(1.0, randf_range(0.58, 0.86), randf_range(0.28, 0.48), 1.0),
+		})
+
+	var t_idx: int = _trail_dots.size() - 1
+	while t_idx >= 0:
+		var td: Dictionary = _trail_dots[t_idx]
+		td["life"] = float(td["life"]) - dt
+		var td_vel: Vector2 = (td["vel"] as Vector2) * exp(-dt * 3.5)
+		td["vel"] = td_vel
+		td["pos"] = (td["pos"] as Vector2) + td_vel * dt
+		if float(td["life"]) <= 0.0:
+			_trail_dots.remove_at(t_idx)
+		t_idx -= 1
+
+
 func _step_title_swim(dt: float, palette: Dictionary) -> void:
 	# Gentle figure-8 swim offset around the title card so Charlie stays lively & visible
 	_title_swim_time += dt
@@ -1882,6 +2110,10 @@ func _step_title_swim(dt: float, palette: Dictionary) -> void:
 	var move_dir: Vector2 = to_target.normalized() * clampf(to_target.length() / maxf(_charlie.world_size * 2.2, 1.0), 0.25, 0.72)
 
 	_charlie.step_motion(dt, move_dir, true, null, null, palette)
+	_step_swim_trail(dt)
+	if not _trail_dots.is_empty() or _vfx_was_active:
+		_vfx_layer.queue_redraw()
+		_vfx_was_active = not _trail_dots.is_empty()
 
 	# Keep camera gently drifting near origin so Charlie loops into clear view around the card
 	var desired_cam: Vector2 = _charlie.position * 0.18
@@ -1924,6 +2156,7 @@ func _step_playing(dt: float, palette: Dictionary) -> void:
 	var predator_chasing: bool = bool(eco_info.get("predator_chasing", false))
 
 	_charlie.step_motion(dt, move_dir, has_input, nearest_prey, nearest_pred, palette)
+	_step_swim_trail(dt)
 	_step_projectiles_and_vfx(dt, creatures)
 	_resolve_creature_collisions(creatures)
 	if state != GameState.PLAYING:
@@ -1966,6 +2199,7 @@ func _step_playing(dt: float, palette: Dictionary) -> void:
 		or not _shockwaves.is_empty()
 		or not _bursts.is_empty()
 		or not _embers.is_empty()
+		or not _trail_dots.is_empty()
 		or _warp_flash_life > 0.0
 	)
 	if has_vfx or _vfx_was_active:
@@ -2144,7 +2378,11 @@ func _resolve_creature_collisions(creatures: Array[Creature]) -> void:
 
 			var prey_angle: float = (c.position - _charlie.position).angle()
 			_charlie.trigger_chomp(prey_angle, 1.0 + float(_combo_count - 1) * 0.06)
-			_spawn_burst(c.position, Color(1.0, 0.85, 0.52, 1.0), c.world_size * 1.4)
+			var sp_col: Color = c.species.get("color", Color(1.0, 0.85, 0.52, 1.0)) as Color
+			var sp_accent: Color = c.species.get("accent", Color(1.0, 0.94, 0.74, 1.0)) as Color
+			var burst_r: float = maxf(c.world_size * 1.65, _charlie.world_size * 0.72)
+			_spawn_burst(c.position, sp_col, burst_r)
+			_spawn_stardust(c.position, 8, maxf(c.world_size * 1.15, _charlie.world_size * 0.55), sp_col, sp_accent)
 			_add_trauma(0.11)
 			_vibrate(14)
 			if _audio != null:
@@ -2230,6 +2468,8 @@ func _advance_scale() -> void:
 	_shockwaves.clear()
 	_bursts.clear()
 	_embers.clear()
+	_trail_dots.clear()
+	_trail_spawn_cd = 0.0
 
 	if current_scale_index + 1 < Scales.NUM_SCALES:
 		var prev_lvl: int = _get_power_level()
@@ -2302,8 +2542,8 @@ func _show_victory_overlay() -> void:
 
 
 func _compute_target_zoom(charlie_size: float) -> float:
-	# Keep Charlie at ~36 screen pixels radius across all 6 logarithmic scales
-	return clampf(36.0 / maxf(charlie_size, 1.0), 0.0001, 4.0)
+	# Pull camera out ~8% (0.92x) so the player sees more of the living world and feels faster
+	return clampf((36.0 * 0.92) / maxf(charlie_size, 1.0), 0.0001, 4.0)
 
 
 func _update_background_shader(palette: Dictionary, progress: float) -> void:
@@ -2418,7 +2658,7 @@ func _spawn_burst(pos: Vector2, col: Color, radius: float) -> void:
 
 func _spawn_embers(pos: Vector2, count: int, spread_scale: float) -> void:
 	for i: int in range(count):
-		if _embers.size() >= 72:
+		if _embers.size() >= 84:
 			_embers.pop_front()
 		var ang: float = randf_range(0.0, TAU)
 		var spd: float = spread_scale * randf_range(1.6, 4.8)
@@ -2430,6 +2670,24 @@ func _spawn_embers(pos: Vector2, count: int, spread_scale: float) -> void:
 			"life": life,
 			"max_life": life,
 			"color": Color(1.0, randf_range(0.48, 0.84), 0.24, 1.0),
+		})
+
+
+func _spawn_stardust(pos: Vector2, count: int, spread_scale: float, base_col: Color, accent_col: Color) -> void:
+	for i: int in range(count):
+		if _embers.size() >= 84:
+			_embers.pop_front()
+		var ang: float = (float(i) / float(maxi(1, count))) * TAU + randf_range(-0.35, 0.35)
+		var spd: float = spread_scale * randf_range(2.0, 5.2)
+		var life: float = randf_range(0.28, 0.54)
+		var col: Color = base_col.lerp(accent_col, randf_range(0.0, 0.65))
+		_embers.append({
+			"pos": pos + Vector2.from_angle(ang) * (spread_scale * 0.18),
+			"vel": Vector2.from_angle(ang) * spd,
+			"radius": maxf(1.4, spread_scale * randf_range(0.09, 0.18)),
+			"life": life,
+			"max_life": life,
+			"color": col,
 		})
 
 
@@ -2470,6 +2728,16 @@ func _draw_world_vfx(canvas: Node2D) -> void:
 				canvas.draw_arc(_warp_origin, ring_r, 0.0, TAU, 56, outer_ring, maxf(3.0, base_r * 0.30 * r_fade), true)
 				canvas.draw_arc(_warp_origin, ring_r, 0.0, TAU, 56, inner_ring, maxf(1.5, base_r * 0.10 * r_fade), true)
 
+	# Luminous lava-sparkle swim trail behind Charlie
+	for td: Dictionary in _trail_dots:
+		var frac: float = clampf(float(td["life"]) / maxf(0.01, float(td["max_life"])), 0.0, 1.0)
+		var fade: float = frac * frac
+		var td_pos: Vector2 = td["pos"] as Vector2
+		var td_r: float = float(td["radius"]) * (0.45 + 0.55 * frac)
+		var col: Color = td["color"] as Color
+		_draw_soft_glow(canvas, td_pos, td_r * 2.2, Color(col.r, col.g * 0.82, col.b * 0.72, fade * 0.42))
+		_draw_soft_glow(canvas, td_pos, td_r * 0.92, Color(1.0, 0.95, 0.78, fade * 0.78))
+
 	# Shockwaves (soft outer halo band + crisp bright core ring + spawn flash)
 	for w: Dictionary in _shockwaves:
 		var frac: float = clampf(float(w["life"]) / maxf(0.01, float(w["max_life"])), 0.0, 1.0)
@@ -2484,14 +2752,14 @@ func _draw_world_vfx(canvas: Node2D) -> void:
 			var flash_a: float = ((frac - 0.45) / 0.55) * 0.36
 			_draw_soft_glow(canvas, w_pos, rad * 0.72, Color(col.r, col.g, col.b, flash_a))
 
-	# Molten ember particles (soft layered radial glow)
+	# Molten embers & species-colored stardust droplets (soft layered radial glow)
 	for em: Dictionary in _embers:
 		var frac: float = clampf(float(em["life"]) / maxf(0.01, float(em["max_life"])), 0.0, 1.0)
 		var em_pos: Vector2 = em["pos"] as Vector2
 		var em_r: float = float(em["radius"]) * (0.45 + 0.55 * frac)
 		var col: Color = em["color"] as Color
-		_draw_soft_glow(canvas, em_pos, em_r * 2.5, Color(col.r, col.g * 0.72, col.b * 0.5, frac * 0.48))
-		_draw_soft_glow(canvas, em_pos, em_r * 1.15, Color(1.0, 0.94, 0.74, frac * 0.95))
+		_draw_soft_glow(canvas, em_pos, em_r * 2.5, Color(col.r, col.g, col.b, frac * 0.52))
+		_draw_soft_glow(canvas, em_pos, em_r * 1.12, Color(1.0, 0.96, 0.86, frac * 0.92))
 
 	# Lava spit projectiles (multi-layer additive-feeling radial glow)
 	for p: Dictionary in _projectiles:
@@ -2505,7 +2773,7 @@ func _draw_world_vfx(canvas: Node2D) -> void:
 		_draw_soft_glow(canvas, pos, r * 1.45, mid_col)
 		_draw_soft_glow(canvas, pos, r * 0.78, core_col)
 
-	# Chomp / impact / heal bursts (soft flash + glowing ring + radial glow sparkles)
+	# Chomp / impact / heal bursts (soft flash + expanding glow ring + radial glow sparkles)
 	for b: Dictionary in _bursts:
 		var frac: float = clampf(float(b["life"]) / maxf(0.01, float(b["max_life"])), 0.0, 1.0)
 		var inv_f: float = 1.0 - frac
@@ -2513,15 +2781,15 @@ func _draw_world_vfx(canvas: Node2D) -> void:
 		var col: Color = b["color"] as Color
 		var max_r: float = float(b["radius"])
 		# Soft central glow flash
-		_draw_soft_glow(canvas, pos, max_r * (0.9 + inv_f * 0.6), Color(col.r, col.g, col.b, frac * frac * 0.45))
-		# Soft outer halo ring + crisp inner ring
-		var ring_r: float = max_r * (0.35 + inv_f * 0.85)
-		canvas.draw_arc(pos, ring_r, 0.0, TAU, 28, Color(col.r, col.g, col.b, frac * 0.32), maxf(3.0, max_r * 0.18 * frac), true)
-		canvas.draw_arc(pos, ring_r, 0.0, TAU, 28, Color(1.0, 0.96, 0.86, frac * 0.78), maxf(1.4, max_r * 0.06 * frac), true)
+		_draw_soft_glow(canvas, pos, max_r * (0.95 + inv_f * 0.65), Color(col.r, col.g, col.b, frac * frac * 0.48))
+		# Soft outer halo ring + crisp inner luminous ring
+		var ring_r: float = max_r * (0.32 + inv_f * 0.92)
+		canvas.draw_arc(pos, ring_r, 0.0, TAU, 32, Color(col.r, col.g, col.b, frac * 0.38), maxf(3.0, max_r * 0.20 * frac), true)
+		canvas.draw_arc(pos, ring_r, 0.0, TAU, 32, Color(1.0, 0.97, 0.88, frac * 0.82), maxf(1.4, max_r * 0.065 * frac), true)
 		# 6 glowing radial sparkle motes
 		for i: int in range(6):
 			var ang: float = float(i) * TAU / 6.0 + inv_f * 0.65
 			var p_off: Vector2 = Vector2.from_angle(ang) * (max_r * (0.25 + inv_f * 0.98))
 			var sp_r: float = maxf(1.4, max_r * 0.18 * frac)
-			_draw_soft_glow(canvas, pos + p_off, sp_r * 2.2, Color(col.r, col.g, col.b, frac * 0.55))
+			_draw_soft_glow(canvas, pos + p_off, sp_r * 2.2, Color(col.r, col.g, col.b, frac * 0.58))
 			_draw_soft_glow(canvas, pos + p_off, sp_r * 1.0, Color(1.0, 0.97, 0.88, frac * 0.92))

@@ -25,7 +25,7 @@ Scales="*res://scripts/scales.gd"
 window/size/viewport_width=1280
 window/size/viewport_height=720
 window/size/mode=3
-window/stretch/mode="canvas_items"
+window/stretch/mode="viewport"
 window/stretch/aspect="expand"
 window/handheld/orientation=4
 
@@ -37,6 +37,7 @@ pointing/emulate_touch_from_mouse=true
 
 renderer/rendering_method="mobile"
 renderer/rendering_method.mobile="mobile"
-anti_aliasing/quality/msaa_2d=2
+anti_aliasing/quality/msaa_2d=0
+textures/canvas_textures/default_texture_filter=1
 textures/vram_compression/import_etc2_astc=true
 environment/defaults/default_clear_color=Color(0.027, 0.078, 0.11, 1)
