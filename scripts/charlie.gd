@@ -13,7 +13,7 @@ const COMPOSITE_SHADER_PATH: String = "res://shaders/charlie_refract_composite.g
 const MAX_DROPLETS: int = 3
 const BODY_QUAD_SCALE: float = 4.8
 const BODY_HALF_SCALE: float = 2.4
-const SUBVIEWPORT_SIZE: int = 320
+const SUBVIEWPORT_SIZE: int = 224
 
 const LOBE_COUNT: int = 5
 const CORE_BASE_RADIUS: float = 0.46
@@ -222,7 +222,7 @@ func _setup_visuals() -> void:
 	_subviewport.size = Vector2i(SUBVIEWPORT_SIZE, SUBVIEWPORT_SIZE)
 	_subviewport.transparent_bg = true
 	_subviewport.own_world_3d = true
-	_subviewport.msaa_3d = Viewport.MSAA_4X
+	_subviewport.msaa_3d = Viewport.MSAA_2X
 	_subviewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	_subviewport.handle_input_locally = false
 	_subviewport.gui_disable_input = true
@@ -309,8 +309,8 @@ func _build_3d_scene() -> void:
 	var shell_mesh := SphereMesh.new()
 	shell_mesh.radius = 0.88
 	shell_mesh.height = 1.76
-	shell_mesh.radial_segments = 56
-	shell_mesh.rings = 34
+	shell_mesh.radial_segments = 36
+	shell_mesh.rings = 22
 
 	# 1. Inner Volumetric 3D Honey-Coral Shell (cull_front, sorting_offset = -1.0, renders BEHIND anatomy!)
 	_inner_shell = MeshInstance3D.new()
@@ -354,8 +354,8 @@ func _build_internal_pearls() -> void:
 	var pearl_mesh := SphereMesh.new()
 	pearl_mesh.radius = 0.102
 	pearl_mesh.height = 0.204
-	pearl_mesh.radial_segments = 24
-	pearl_mesh.rings = 14
+	pearl_mesh.radial_segments = 16
+	pearl_mesh.rings = 10
 
 	var pearl_mat: ShaderMaterial = _create_pearl_material()
 
@@ -377,8 +377,8 @@ func _build_internal_pearls() -> void:
 	var spark_mesh := SphereMesh.new()
 	spark_mesh.radius = 0.105
 	spark_mesh.height = 0.210
-	spark_mesh.radial_segments = 18
-	spark_mesh.rings = 12
+	spark_mesh.radial_segments = 12
+	spark_mesh.rings = 8
 	_nascent_spark.mesh = spark_mesh
 	_spark_mat = _create_spark_material()
 	_nascent_spark.material_override = _spark_mat
@@ -401,8 +401,8 @@ func _build_internal_bubbles() -> void:
 		var bm := SphereMesh.new()
 		bm.radius = r
 		bm.height = r * 2.0
-		bm.radial_segments = 16
-		bm.rings = 10
+		bm.radial_segments = 10
+		bm.rings = 6
 		var b_node := MeshInstance3D.new()
 		b_node.name = "MicroBubble_%d" % i
 		b_node.mesh = bm
@@ -424,8 +424,8 @@ func _build_face_rig() -> void:
 	var cheek_mesh := SphereMesh.new()
 	cheek_mesh.radius = 1.0
 	cheek_mesh.height = 2.0
-	cheek_mesh.radial_segments = 20
-	cheek_mesh.rings = 12
+	cheek_mesh.radial_segments = 12
+	cheek_mesh.rings = 8
 	var cheek_mat: ShaderMaterial = _create_cheek_material()
 
 	_left_cheek = MeshInstance3D.new()
@@ -462,32 +462,32 @@ func _build_face_rig() -> void:
 	var eyeball_mesh := SphereMesh.new()
 	eyeball_mesh.radius = 0.188
 	eyeball_mesh.height = 0.376
-	eyeball_mesh.radial_segments = 24
-	eyeball_mesh.rings = 16
+	eyeball_mesh.radial_segments = 16
+	eyeball_mesh.rings = 10
 
 	var sclera_mesh := SphereMesh.new()
 	sclera_mesh.radius = 0.200
 	sclera_mesh.height = 0.400
-	sclera_mesh.radial_segments = 22
-	sclera_mesh.rings = 14
+	sclera_mesh.radial_segments = 14
+	sclera_mesh.rings = 10
 
 	var iris_mesh := SphereMesh.new()
 	iris_mesh.radius = 0.124
 	iris_mesh.height = 0.248
-	iris_mesh.radial_segments = 20
-	iris_mesh.rings = 12
+	iris_mesh.radial_segments = 14
+	iris_mesh.rings = 8
 
 	var hi1_mesh := SphereMesh.new()
 	hi1_mesh.radius = 0.064
 	hi1_mesh.height = 0.128
-	hi1_mesh.radial_segments = 16
-	hi1_mesh.rings = 10
+	hi1_mesh.radial_segments = 10
+	hi1_mesh.rings = 6
 
 	var hi2_mesh := SphereMesh.new()
 	hi2_mesh.radius = 0.029
 	hi2_mesh.height = 0.058
-	hi2_mesh.radial_segments = 12
-	hi2_mesh.rings = 8
+	hi2_mesh.radial_segments = 8
+	hi2_mesh.rings = 6
 
 	# Build Left & Right 3D Soulful Ghibli Eye Rigs
 	var left_parts: Dictionary = _create_eye_rig(
@@ -540,8 +540,8 @@ func _build_face_rig() -> void:
 	var cav_mesh := SphereMesh.new()
 	cav_mesh.radius = 0.148
 	cav_mesh.height = 0.296
-	cav_mesh.radial_segments = 22
-	cav_mesh.rings = 14
+	cav_mesh.radial_segments = 14
+	cav_mesh.rings = 8
 	_mouth_cavity.mesh = cav_mesh
 	_mouth_cavity.material_override = _create_mouth_cavity_material()
 	_mouth_cavity.scale = Vector3(1.0, 0.85, 0.42)

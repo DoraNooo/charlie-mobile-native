@@ -3420,10 +3420,14 @@ func _run_visual_capture(out_dir: String) -> void:
 
 	var swim_dir: Vector2 = Vector2(0.88, -0.22)
 
-	# 3. Scale 0 — Quantique
+	# 3. Scale 0 — Quantique (with active liquid-glass joystick preview for visual QA)
 	_prepare_capture_world(0, swim_dir)
+	if _joystick != null and _joystick.has_method("debug_set_preview"):
+		_joystick.call("debug_set_preview", true, Vector2(0.72, -0.32))
 	await _wait_capture_frames(24)
 	_save_capture_png(out_dir, "03_quantum.png")
+	if _joystick != null and _joystick.has_method("debug_set_preview"):
+		_joystick.call("debug_set_preview", false, Vector2.ZERO)
 
 	# 4. Scale 1 — Microscopique
 	_prepare_capture_world(1, swim_dir)

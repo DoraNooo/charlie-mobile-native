@@ -80,13 +80,9 @@ void fragment() {
 			clamp(UV.x - local_shadow_off.x * 0.25, u_min, u_max),
 			clamp(UV.y - local_shadow_off.y, v_min, v_max)
 		);
-		vec2 sh_blur = vec2(0.0045 * 0.25, 0.0045);
-		float s0 = texture(TEXTURE, sh_uv).a;
-		float s1 = texture(TEXTURE, vec2(clamp(sh_uv.x + sh_blur.x, u_min, u_max), clamp(sh_uv.y + sh_blur.y, v_min, v_max))).a;
-		float s2 = texture(TEXTURE, vec2(clamp(sh_uv.x - sh_blur.x, u_min, u_max), clamp(sh_uv.y - sh_blur.y, v_min, v_max))).a;
-		float sh_raw = s0 * 0.52 + (s1 + s2) * 0.24;
+		float sh_raw = texture(TEXTURE, sh_uv).a;
 		// Only solid silhouette mass casts grounding shadow (keeps wispy glow edges clean)
-		shadow_a = smoothstep(0.16, 0.68, sh_raw) * 0.28 * sh_in_bounds * edge_feather;
+		shadow_a = smoothstep(0.16, 0.68, sh_raw) * 0.26 * sh_in_bounds * edge_feather;
 	}
 
 	if (tex.a <= 0.004 && shadow_a <= 0.003 && !need_outline) {
@@ -181,20 +177,20 @@ void fragment() {
 
 	// Crisp silky Fresnel silhouette readability (predator danger rim & edible prey edge glint)
 	if (need_outline) {
-		vec2 step_uv = TEXTURE_PIXEL_SIZE * 1.75;
-
-		float a_l = texture(TEXTURE, vec2(clamp(UV.x - step_uv.x, u_min, u_max), UV.y)).a;
-		float a_r = texture(TEXTURE, vec2(clamp(UV.x + step_uv.x, u_min, u_max), UV.y)).a;
-		float a_u = texture(TEXTURE, vec2(UV.x, clamp(UV.y - step_uv.y, v_min, v_max))).a;
-		float a_d = texture(TEXTURE, vec2(UV.x, clamp(UV.y + step_uv.y, v_min, v_max))).a;
-
-		float min_a = min(min(a_l, a_r), min(a_u, a_d));
-		float avg_a = 0.25 * (a_l + a_r + a_u + a_d);
 		float body_c = smoothstep(0.18, 0.72, tex.a);
-		// Smooth inner Fresnel edge right inside the creature silhouette
-		float inner_rim = body_c * (1.0 - smoothstep(0.24, 0.88, min_a));
-		// Soft 1.5px feathered aura hugging the outside of the silhouette (damped by cell edge feather)
-		float outer_aura = (1.0 - smoothstep(0.22, 0.70, tex.a)) * smoothstep(0.10, 0.72, avg_a) * edge_feather;
+		float inner_rim = 0.0;
+		float outer_aura = 0.0;
+		if (tex.a < 0.92 || dome_fresnel > 0.14) {
+			vec2 step_uv = TEXTURE_PIXEL_SIZE * 1.75;
+			float a_l = texture(TEXTURE, vec2(clamp(UV.x - step_uv.x, u_min, u_max), UV.y)).a;
+			float a_r = texture(TEXTURE, vec2(clamp(UV.x + step_uv.x, u_min, u_max), UV.y)).a;
+			float a_u = texture(TEXTURE, vec2(UV.x, clamp(UV.y - step_uv.y, v_min, v_max))).a;
+			float a_d = texture(TEXTURE, vec2(UV.x, clamp(UV.y + step_uv.y, v_min, v_max))).a;
+			float min_a = min(min(a_l, a_r), min(a_u, a_d));
+			float avg_a = 0.25 * (a_l + a_r + a_u + a_d);
+			inner_rim = body_c * (1.0 - smoothstep(0.24, 0.88, min_a));
+			outer_aura = (1.0 - smoothstep(0.22, 0.70, tex.a)) * smoothstep(0.10, 0.72, avg_a) * edge_feather;
+		}
 		float soft_dome_rim = dome_fresnel * body_c;
 
 		if (danger_rim > 0.01) {

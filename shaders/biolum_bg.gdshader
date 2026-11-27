@@ -101,32 +101,32 @@ void fragment() {
 		sin(cam_offset.y * 0.00045 + 0.04) * 0.034 + cos(t * 0.08 + 0.8) * 0.0025
 	);
 
-	vec2 sz_a = vec2(textureSize(world_tex_a, 0));
-	vec2 sz_b = vec2(textureSize(world_tex_b, 0));
-	float has_a = step(16.0, sz_a.x);
-	float has_b = step(16.0, sz_b.x);
-	float tex_aspect_a = (has_a > 0.5) ? (sz_a.x / max(sz_a.y, 1.0)) : (16.0 / 9.0);
-	float tex_aspect_b = (has_b > 0.5) ? (sz_b.x / max(sz_b.y, 1.0)) : (16.0 / 9.0);
-
-	vec2 uv_a = compute_cover_parallax_uv(uv, vp_aspect, tex_aspect_a, breath_zoom, pan_a);
-	vec2 uv_b = compute_cover_parallax_uv(uv, vp_aspect, tex_aspect_b, breath_zoom * 1.012, pan_b);
-
-	// Graceful velvety procedural fallback if a world texture is unbound
-	vec2 bg_v = (p - vec2(-0.06, -0.05)) * vec2(0.84, 1.06);
-	float velvet_wave = sin(p.x * 2.4 + t * 0.11) * cos(p.y * 2.8 - t * 0.09) * 0.028;
-	vec3 proc_col = mix(bg_inner.rgb, bg_outer.rgb * 0.72, smoothstep(0.02, 0.88, dot(bg_v, bg_v) + velvet_wave));
-	vec2 key_v = (p - vec2(-0.42 * min(vp_aspect * 0.65, 1.0), -0.40)) * vec2(0.74, 0.94);
-	float key_lift = 1.0 - smoothstep(0.02, 1.12, dot(key_v, key_v));
-	proc_col += mix(accent.rgb, bg_inner.rgb * 1.35, 0.60) * key_lift * 0.055;
-
-	vec3 sample_a = texture(world_tex_a, uv_a).rgb;
-	vec3 sample_b = texture(world_tex_b, uv_b).rgb;
-	vec3 col_a = mix(proc_col, sample_a, has_a);
-	vec3 col_b = mix(col_a, sample_b, has_b);
-
-	// Silky C1 crossfade between painted worlds
 	float wb = smoothstep(0.0, 1.0, clamp(world_blend, 0.0, 1.0));
-	vec3 col = mix(col_a, col_b, wb);
+	vec2 sz_a = vec2(textureSize(world_tex_a, 0));
+	float has_a = step(16.0, sz_a.x);
+	float tex_aspect_a = (has_a > 0.5) ? (sz_a.x / max(sz_a.y, 1.0)) : (16.0 / 9.0);
+	vec2 uv_a = compute_cover_parallax_uv(uv, vp_aspect, tex_aspect_a, breath_zoom, pan_a);
+
+	vec3 col;
+	if (has_a > 0.5) {
+		col = texture(world_tex_a, uv_a).rgb;
+		if (wb > 0.001) {
+			vec2 sz_b = vec2(textureSize(world_tex_b, 0));
+			if (sz_b.x >= 16.0) {
+				float tex_aspect_b = sz_b.x / max(sz_b.y, 1.0);
+				vec2 uv_b = compute_cover_parallax_uv(uv, vp_aspect, tex_aspect_b, breath_zoom * 1.012, pan_b);
+				col = mix(col, texture(world_tex_b, uv_b).rgb, wb);
+			}
+		}
+	} else {
+		// Graceful velvety procedural fallback if a world texture is unbound
+		vec2 bg_v = (p - vec2(-0.06, -0.05)) * vec2(0.84, 1.06);
+		float velvet_wave = sin(p.x * 2.4 + t * 0.11) * cos(p.y * 2.8 - t * 0.09) * 0.028;
+		vec3 proc_col = mix(bg_inner.rgb, bg_outer.rgb * 0.72, smoothstep(0.02, 0.88, dot(bg_v, bg_v) + velvet_wave));
+		vec2 key_v = (p - vec2(-0.42 * min(vp_aspect * 0.65, 1.0), -0.40)) * vec2(0.74, 0.94);
+		float key_lift = 1.0 - smoothstep(0.02, 1.12, dot(key_v, key_v));
+		col = proc_col + mix(accent.rgb, bg_inner.rgb * 1.35, 0.60) * key_lift * 0.055;
+	}
 
 	// -------------------------------------------------------------------------
 	// 2. Cinematic Miyazaki jewel-tone richness (vibrant on OLED, never washed out)
@@ -231,12 +231,9 @@ void fragment() {
 	float star_weight = w3 * 0.55 * (1.0 - smoothstep(0.30, 0.62, uv.y)) + w4 * 0.82 * (1.0 - smoothstep(0.62, 0.82, uv.y)) + w5 * 0.95;
 	if (star_weight > 0.005) {
 		const mat2 ROT_A = mat2(vec2(0.9455, 0.3256), vec2(-0.3256, 0.9455));
-		const mat2 ROT_B = mat2(vec2(0.8572, -0.5150), vec2(0.5150, 0.8572));
-		vec2 st_far = twinkling_stars(uv_asp, pan_a * 0.85, ROT_A, 13.5, t, 0.62, 7.3);
-		vec2 st_mid = twinkling_stars(uv_asp, pan_a * 1.35, ROT_B, 7.8, t, 0.68, 29.1);
+		vec2 st = twinkling_stars(uv_asp, pan_a * 1.05, ROT_A, 11.2, t, 0.56, 7.3);
 		vec3 star_tint = mix(vec3(0.82, 0.92, 1.0), vec3(1.0, 0.90, 0.62), w5 * 0.65);
-		vec3 star_rgb = star_tint * (st_far.x * 0.14 + st_mid.x * 0.18)
-			+ vec3(1.0, 0.97, 0.88) * (st_far.y * 0.36 + st_mid.y * 0.32);
+		vec3 star_rgb = star_tint * (st.x * 0.22) + vec3(1.0, 0.97, 0.88) * (st.y * 0.44);
 		col += star_rgb * star_weight;
 	}
 
