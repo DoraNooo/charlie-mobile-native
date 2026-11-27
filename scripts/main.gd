@@ -92,6 +92,9 @@ var _world_env: WorldEnvironment = null
 var _bg_layer: CanvasLayer = null
 var _bg_rect: ColorRect = null
 var _bg_mat: ShaderMaterial = null
+var _world_textures: Array[Texture2D] = []
+var _last_bg_idx_a: int = -1
+var _last_bg_idx_b: int = -1
 var _atmosphere: Node = null
 var _camera: Camera2D = null
 var _ecosystem: Ecosystem = null
@@ -987,6 +990,17 @@ func _add_trauma(amount: float) -> void:
 
 
 func _setup_background() -> void:
+	_world_textures = [
+		preload("res://assets/art/worlds/world_0_quantum.jpg"),
+		preload("res://assets/art/worlds/world_1_micro.jpg"),
+		preload("res://assets/art/worlds/world_2_forest.jpg"),
+		preload("res://assets/art/worlds/world_3_city.jpg"),
+		preload("res://assets/art/worlds/world_4_planetary.jpg"),
+		preload("res://assets/art/worlds/world_5_cosmic.jpg"),
+	]
+	_last_bg_idx_a = -1
+	_last_bg_idx_b = -1
+
 	_bg_layer = CanvasLayer.new()
 	_bg_layer.name = "BackgroundLayer"
 	_bg_layer.layer = -10
@@ -1002,33 +1016,24 @@ func _setup_background() -> void:
 	if bg_shader != null:
 		_bg_mat.shader = bg_shader
 	_bg_rect.material = _bg_mat
+	_apply_world_backdrop_textures(0.0)
 	_bg_layer.add_child(_bg_rect)
 
 
 func _setup_world() -> void:
-	# HDR WorldEnvironment: AgX (or Filmic on Godot 4.3) tonemapping + selective 3-level bloom on world layers <= 5
-	# (HUD on layer 10, Menus on layer 20, Cutscenes on layer 30 remain 100% razor-sharp)
+	# Vibrant, crisp Miyazaki color grading on world layers <= 5 (HUD 10, Menus 20, Cutscenes 30 untouched).
+	# Linear tonemap + glow disabled avoids Vulkan Mobile white highlight blowout while
+	# calibrated brightness/contrast/saturation adjustments keep the 6 painted worlds lush & jewel-toned.
 	var env: Environment = Environment.new()
 	env.background_mode = Environment.BG_CANVAS
 	env.background_canvas_max_layer = 5
-	# Calm, matte look (user feedback: "Charlie et la carte brillent trop"):
-	# linear tonemap + no screen bloom so the Vulkan Mobile device render matches
-	# the soft authored colors instead of blowing highlights out to white.
 	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
 	env.tonemap_exposure = 1.0
 	env.glow_enabled = false
-	env.glow_normalized = true
-	env.glow_hdr_threshold = 1.22
-	env.glow_intensity = 0.30
-	env.glow_strength = 0.72
-	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SCREEN
-	env.set_glow_level(0, 0.0)
-	env.set_glow_level(1, 0.55)
-	env.set_glow_level(2, 1.0)
-	env.set_glow_level(3, 0.48)
-	env.set_glow_level(4, 0.0)
-	env.set_glow_level(5, 0.0)
-	env.set_glow_level(6, 0.0)
+	env.adjustment_enabled = true
+	env.adjustment_brightness = 1.04
+	env.adjustment_contrast = 1.09
+	env.adjustment_saturation = 1.18
 
 	_world_env = WorldEnvironment.new()
 	_world_env.name = "WorldEnvironment"
@@ -2706,7 +2711,8 @@ func _step_playing(dt: float, palette: Dictionary) -> void:
 
 	_update_hud()
 	var has_vfx: bool = (
-		not _projectiles.is_empty()
+		(_charlie != null and _charlie.visible)
+		or not _projectiles.is_empty()
 		or not _shockwaves.is_empty()
 		or not _bursts.is_empty()
 		or not _embers.is_empty()
@@ -3090,6 +3096,22 @@ func _compute_target_zoom(charlie_size: float) -> float:
 	return clampf((36.0 * 0.92) / maxf(charlie_size, 1.0), 0.0001, 4.0)
 
 
+func _apply_world_backdrop_textures(progress: float) -> void:
+	if _bg_mat == null or _world_textures.is_empty():
+		return
+	var tex_count: int = _world_textures.size()
+	var idx_a: int = clampi(int(floor(progress)), 0, tex_count - 1)
+	var idx_b: int = mini(idx_a + 1, tex_count - 1)
+	var blend: float = clampf(progress - float(idx_a), 0.0, 1.0)
+	if idx_a != _last_bg_idx_a:
+		_bg_mat.set_shader_parameter("world_tex_a", _world_textures[idx_a])
+		_last_bg_idx_a = idx_a
+	if idx_b != _last_bg_idx_b:
+		_bg_mat.set_shader_parameter("world_tex_b", _world_textures[idx_b])
+		_last_bg_idx_b = idx_b
+	_bg_mat.set_shader_parameter("world_blend", blend)
+
+
 func _update_background_shader(palette: Dictionary, progress: float) -> void:
 	if _bg_mat == null:
 		return
@@ -3102,24 +3124,26 @@ func _update_background_shader(palette: Dictionary, progress: float) -> void:
 	_bg_mat.set_shader_parameter("time_sec", _play_time)
 	_bg_mat.set_shader_parameter("viewport_size", get_viewport().get_visible_rect().size)
 	_bg_mat.set_shader_parameter("scale_progress", progress)
+	_apply_world_backdrop_textures(progress)
 
 
 func _update_global_shader_uniforms(palette: Dictionary) -> void:
 	if _global_uniforms.is_empty():
 		return
 	var bg_inner: Color = palette.get("bg_inner", Color(0.055, 0.153, 0.200, 1.0)) as Color
-	var rim_col: Color = palette.get("accent", palette.get("mote_color", Color(0.431, 0.906, 0.855, 1.0))) as Color
-	var charlie_col: Color = palette.get("blob_glow", palette.get("blob_edge", Color(1.0, 0.48, 0.36, 1.0))) as Color
+	var ambient_col: Color = palette.get("ambient", bg_inner) as Color
+	var rim_col: Color = palette.get("rim", palette.get("accent", palette.get("mote_color", Color(0.431, 0.906, 0.855, 1.0)))) as Color
+	var charlie_col: Color = Color(1.0, 0.56, 0.22, 1.0)
 	if _global_uniforms.has(&"g_world_ambient"):
-		RenderingServer.global_shader_parameter_set(&"g_world_ambient", bg_inner)
+		RenderingServer.global_shader_parameter_set(&"g_world_ambient", ambient_col)
 	if _global_uniforms.has(&"g_world_rim_color"):
 		RenderingServer.global_shader_parameter_set(&"g_world_rim_color", rim_col)
 	if _global_uniforms.has(&"g_charlie_light") and _charlie != null:
 		var light_vec: Vector4 = Vector4(
 			_charlie.position.x,
 			_charlie.position.y,
-			_charlie.world_size * 5.2,
-			0.92 + 0.08 * sin(_play_time * 3.0)
+			_charlie.world_size * 6.4,
+			0.92 + 0.06 * sin(_play_time * 3.0)
 		)
 		RenderingServer.global_shader_parameter_set(&"g_charlie_light", light_vec)
 	if _global_uniforms.has(&"g_charlie_color"):
@@ -3215,7 +3239,15 @@ func _draw_soft_glow(canvas: Node2D, pos: Vector2, radius: float, col: Color) ->
 
 
 func _draw_world_vfx(canvas: Node2D) -> void:
-	# Additive HDR bioluminescent VFX layer (BLEND_MODE_ADD + AgX selective bloom > 1.15)
+	# Soft warm honey-amber ambient lantern light pool cast gently beneath Charlie (low alpha, never glaring white)
+	if state == GameState.PLAYING and _charlie != null and _charlie.visible:
+		var pulse: float = 0.94 + 0.06 * sin(_play_time * 2.6)
+		var c_pos: Vector2 = _charlie.position
+		var c_sz: float = _charlie.world_size
+		_draw_soft_glow(canvas, c_pos, c_sz * 4.6, Color(1.0, 0.54, 0.18, 0.14 * pulse))
+		_draw_soft_glow(canvas, c_pos, c_sz * 2.1, Color(1.0, 0.66, 0.26, 0.06 * pulse))
+
+	# Additive bioluminescent VFX layer (BLEND_MODE_ADD)
 	if _warp_flash_life > 0.0:
 		var wf_frac: float = clampf(_warp_flash_life / maxf(0.01, _warp_flash_max), 0.0, 1.0)
 		var wf_inv: float = 1.0 - wf_frac
@@ -3327,22 +3359,22 @@ func _prepare_capture_world(scale_idx: int, steer_dir: Vector2) -> void:
 	_reset_world_to_scale(scale_idx)
 	_charlie.invuln_timer = 10.0
 
-	# Frame a rich, unobstructed composition of illuminated creatures around Charlie
+	# Frame a rich, unobstructed composition of illuminated creatures around Charlie's 24-frame swim path
 	var sz: float = _charlie.world_size
 	var creatures: Array[Creature] = _ecosystem.get_creatures()
 	var prey_offsets: Array[Vector2] = [
-		Vector2(3.8, -1.7),
-		Vector2(-3.9, -1.9),
-		Vector2(4.4, 2.1),
-		Vector2(-3.4, 2.6),
-		Vector2(1.8, -3.6),
-		Vector2(-1.6, 3.7),
+		Vector2(5.6, -2.5),
+		Vector2(-1.6, -2.6),
+		Vector2(5.8, 1.8),
+		Vector2(-1.2, 2.4),
+		Vector2(3.4, -4.0),
+		Vector2(1.2, 3.6),
 	]
 	var pred_offsets: Array[Vector2] = [
-		Vector2(-7.2, -2.4),
-		Vector2(7.6, 2.3),
-		Vector2(-6.8, 3.1),
-		Vector2(7.0, -3.2),
+		Vector2(-4.8, -2.8),
+		Vector2(9.2, 1.9),
+		Vector2(-4.4, 2.8),
+		Vector2(8.8, -3.4),
 	]
 	var prey_i: int = 0
 	var pred_i: int = 0
@@ -3367,7 +3399,7 @@ func _run_visual_capture(out_dir: String) -> void:
 	await _wait_capture_frames(4)
 	_update_safe_area()
 
-	# 1. Redesigned Living Ghibli Title Screen
+	# 1. Living Ghibli Title Screen
 	_enter_title_screen()
 	if _overlay_tween != null and _overlay_tween.is_valid():
 		_overlay_tween.kill()
@@ -3386,30 +3418,37 @@ func _run_visual_capture(out_dir: String) -> void:
 		if _cutscenes.has_method("skip_cutscene"):
 			_cutscenes.skip_cutscene()
 
-	# 3. Live World I Quantique gameplay
-	_prepare_capture_world(0, Vector2(0.84, -0.18))
-	await _wait_capture_frames(16)
+	var swim_dir: Vector2 = Vector2(0.88, -0.22)
+
+	# 3. Scale 0 — Quantique
+	_prepare_capture_world(0, swim_dir)
+	await _wait_capture_frames(24)
 	_save_capture_png(out_dir, "03_quantum.png")
 
-	# 3b. Live World II Microscopique gameplay (dewdrop meniscus + caustics + kelp)
-	_prepare_capture_world(1, Vector2(0.84, -0.16))
-	await _wait_capture_frames(16)
-	_save_capture_png(out_dir, "03b_micro.png")
+	# 4. Scale 1 — Microscopique
+	_prepare_capture_world(1, swim_dir)
+	await _wait_capture_frames(24)
+	_save_capture_png(out_dir, "04_micro.png")
 
-	# 4. Live World III Sous-Bois gameplay (4-plane forest depth + moonlight + fireflies)
-	_prepare_capture_world(2, Vector2(0.82, -0.16))
-	await _wait_capture_frames(16)
-	_save_capture_png(out_dir, "04_forest.png")
+	# 5. Scale 2 — Sous-Bois
+	_prepare_capture_world(2, swim_dir)
+	await _wait_capture_frames(24)
+	_save_capture_png(out_dir, "05_forest.png")
 
-	# 5. Live World IV Ville Endormie gameplay (rooftops + lava-lamp window + lanterns)
-	_prepare_capture_world(3, Vector2(0.86, -0.14))
-	await _wait_capture_frames(16)
-	_save_capture_png(out_dir, "05_city.png")
+	# 6. Scale 3 — Ville Endormie
+	_prepare_capture_world(3, swim_dir)
+	await _wait_capture_frames(24)
+	_save_capture_png(out_dir, "06_city.png")
 
-	# 6. Live World VI Cosmique gameplay (nebulae + distant Golden Star + 3D Charlie)
-	_prepare_capture_world(5, Vector2(0.80, -0.20))
-	await _wait_capture_frames(16)
-	_save_capture_png(out_dir, "06_cosmic.png")
+	# 7. Scale 4 — Planétaire
+	_prepare_capture_world(4, swim_dir)
+	await _wait_capture_frames(24)
+	_save_capture_png(out_dir, "07_planetary.png")
+
+	# 8. Scale 5 — Cosmique
+	_prepare_capture_world(5, swim_dir)
+	await _wait_capture_frames(24)
+	_save_capture_png(out_dir, "08_cosmic.png")
 
 	_capture_steer_override = Vector2.ZERO
 	get_tree().quit(0)

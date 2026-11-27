@@ -50,10 +50,10 @@ const SCALES: Array[Dictionary] = [
 	{
 		"id": "quantum", "index": 0, "roman": "I", "name": "Quantique",
 		"poetic_title": "L'Infiniment Petit", "unit_sub": "10⁻¹⁰ m · Monde Quantique",
-		"bg_inner": Color(0.055, 0.153, 0.200), "bg_outer": Color(0.024, 0.067, 0.098),
-		"mote_color": Color(0.431, 0.906, 0.855),
-		"ambient": Color(0.080, 0.220, 0.280), "rim": Color(0.431, 0.906, 0.855),
-		"blob_core": Color(1.0, 0.72, 0.48), "blob_edge": Color(0.98, 0.38, 0.40), "blob_glow": Color(1.0, 0.48, 0.36),
+		"bg_inner": Color(0.045, 0.165, 0.255), "bg_outer": Color(0.016, 0.062, 0.125),
+		"mote_color": Color(0.360, 0.925, 0.945),
+		"ambient": Color(0.065, 0.220, 0.330), "rim": Color(0.420, 0.950, 0.960),
+		"blob_core": Color(1.00, 0.74, 0.36), "blob_edge": Color(0.98, 0.34, 0.24), "blob_glow": Color(1.00, 0.48, 0.22),
 		"music_root": 329.63,
 		"species": [
 			{"kind": "quark", "name": "Quark", "rel": 0.36, "speed": 1.15, "color": Color("#67e8f9"), "accent": Color("#cffafe"), "behavior": "orbit"},
@@ -66,10 +66,10 @@ const SCALES: Array[Dictionary] = [
 	{
 		"id": "micro", "index": 1, "roman": "II", "name": "Microscopique",
 		"poetic_title": "La Goutte d'Eau", "unit_sub": "10⁻⁶ m · Monde Microscopique",
-		"bg_inner": Color(0.051, 0.204, 0.220), "bg_outer": Color(0.020, 0.094, 0.118),
-		"mote_color": Color(0.525, 0.937, 0.675),
-		"ambient": Color(0.075, 0.260, 0.270), "rim": Color(0.480, 0.950, 0.760),
-		"blob_core": Color(1.0, 0.76, 0.50), "blob_edge": Color(0.96, 0.43, 0.41), "blob_glow": Color(1.0, 0.56, 0.34),
+		"bg_inner": Color(0.042, 0.225, 0.215), "bg_outer": Color(0.016, 0.095, 0.105),
+		"mote_color": Color(0.490, 0.960, 0.785),
+		"ambient": Color(0.065, 0.275, 0.255), "rim": Color(0.520, 0.970, 0.820),
+		"blob_core": Color(1.00, 0.76, 0.38), "blob_edge": Color(0.97, 0.36, 0.24), "blob_glow": Color(1.00, 0.52, 0.24),
 		"music_root": 293.66,
 		"species": [
 			{"kind": "spore", "name": "Spore", "rel": 0.38, "speed": 0.80, "color": Color("#86efac"), "accent": Color("#dcfce7"), "behavior": "drift"},
@@ -82,10 +82,10 @@ const SCALES: Array[Dictionary] = [
 	{
 		"id": "forest", "index": 2, "roman": "III", "name": "Sous-Bois",
 		"poetic_title": "La Rosée Nocturne", "unit_sub": "10⁻² m · Monde des Insectes",
-		"bg_inner": Color(0.082, 0.204, 0.153), "bg_outer": Color(0.031, 0.098, 0.078),
-		"mote_color": Color(0.992, 0.878, 0.510),
-		"ambient": Color(0.110, 0.260, 0.180), "rim": Color(0.950, 0.860, 0.480),
-		"blob_core": Color(1.0, 0.78, 0.50), "blob_edge": Color(0.94, 0.42, 0.34), "blob_glow": Color(1.0, 0.62, 0.28),
+		"bg_inner": Color(0.068, 0.215, 0.145), "bg_outer": Color(0.022, 0.090, 0.070),
+		"mote_color": Color(1.000, 0.875, 0.420),
+		"ambient": Color(0.095, 0.270, 0.170), "rim": Color(0.980, 0.865, 0.430),
+		"blob_core": Color(1.00, 0.77, 0.36), "blob_edge": Color(0.96, 0.35, 0.22), "blob_glow": Color(1.00, 0.54, 0.22),
 		"music_root": 261.63,
 		"species": [
 			{"kind": "ant", "name": "Fourmi", "rel": 0.38, "speed": 1.05, "color": Color("#d97706"), "accent": Color("#fde68a"), "behavior": "roam"},
@@ -98,10 +98,10 @@ const SCALES: Array[Dictionary] = [
 	{
 		"id": "city", "index": 3, "roman": "IV", "name": "Nocturne",
 		"poetic_title": "La Ville Endormie", "unit_sub": "10¹ m · Monde Terrestre",
-		"bg_inner": Color(0.094, 0.161, 0.247), "bg_outer": Color(0.039, 0.075, 0.133),
-		"mote_color": Color(0.984, 0.749, 0.471),
-		"ambient": Color(0.130, 0.200, 0.320), "rim": Color(0.980, 0.740, 0.460),
-		"blob_core": Color(1.0, 0.73, 0.50), "blob_edge": Color(0.95, 0.38, 0.42), "blob_glow": Color(1.0, 0.46, 0.42),
+		"bg_inner": Color(0.082, 0.155, 0.275), "bg_outer": Color(0.030, 0.062, 0.135),
+		"mote_color": Color(1.000, 0.745, 0.380),
+		"ambient": Color(0.115, 0.195, 0.340), "rim": Color(1.000, 0.750, 0.400),
+		"blob_core": Color(1.00, 0.74, 0.38), "blob_edge": Color(0.97, 0.34, 0.26), "blob_glow": Color(1.00, 0.48, 0.26),
 		"music_root": 246.94,
 		"species": [
 			{"kind": "lantern", "name": "Lanterne céleste", "rel": 0.38, "speed": 0.65, "color": Color("#fdba74"), "accent": Color("#ffedd5"), "behavior": "drift"},
@@ -114,10 +114,10 @@ const SCALES: Array[Dictionary] = [
 	{
 		"id": "planetary", "index": 4, "roman": "V", "name": "Planétaire",
 		"poetic_title": "Le Ballet Orbital", "unit_sub": "10⁷ m · Monde Planétaire",
-		"bg_inner": Color(0.063, 0.118, 0.204), "bg_outer": Color(0.020, 0.039, 0.078),
-		"mote_color": Color(0.729, 0.902, 0.992),
-		"ambient": Color(0.090, 0.170, 0.290), "rim": Color(0.700, 0.890, 1.000),
-		"blob_core": Color(1.0, 0.76, 0.54), "blob_edge": Color(0.93, 0.38, 0.46), "blob_glow": Color(0.98, 0.44, 0.56),
+		"bg_inner": Color(0.052, 0.125, 0.245), "bg_outer": Color(0.016, 0.036, 0.090),
+		"mote_color": Color(0.620, 0.915, 1.000),
+		"ambient": Color(0.082, 0.180, 0.330), "rim": Color(0.640, 0.920, 1.000),
+		"blob_core": Color(1.00, 0.76, 0.40), "blob_edge": Color(0.96, 0.35, 0.28), "blob_glow": Color(1.00, 0.50, 0.28),
 		"music_root": 220.00,
 		"species": [
 			{"kind": "asteroid", "name": "Astéroïde", "rel": 0.38, "speed": 0.90, "color": Color("#cbd5e1"), "accent": Color("#f1f5f9"), "behavior": "orbit"},
@@ -130,10 +130,10 @@ const SCALES: Array[Dictionary] = [
 	{
 		"id": "cosmic", "index": 5, "roman": "VI", "name": "Cosmique",
 		"poetic_title": "L'Infiniment Grand", "unit_sub": "10²¹ m · Monde Cosmique",
-		"bg_inner": Color(0.059, 0.114, 0.173), "bg_outer": Color(0.016, 0.027, 0.059),
-		"mote_color": Color(0.996, 0.941, 0.780),
-		"ambient": Color(0.120, 0.140, 0.260), "rim": Color(1.000, 0.900, 0.740),
-		"blob_core": Color(1.0, 0.88, 0.61), "blob_edge": Color(0.96, 0.45, 0.49), "blob_glow": Color(1.0, 0.72, 0.38),
+		"bg_inner": Color(0.075, 0.085, 0.215), "bg_outer": Color(0.020, 0.022, 0.072),
+		"mote_color": Color(1.000, 0.895, 0.560),
+		"ambient": Color(0.135, 0.115, 0.295), "rim": Color(1.000, 0.880, 0.580),
+		"blob_core": Color(1.00, 0.80, 0.42), "blob_edge": Color(0.97, 0.36, 0.28), "blob_glow": Color(1.00, 0.56, 0.24),
 		"music_root": 196.00,
 		"species": [
 			{"kind": "star", "name": "Étoile naine", "rel": 0.38, "speed": 0.85, "color": Color("#fef08a"), "accent": Color("#ffffff"), "behavior": "orbit"},

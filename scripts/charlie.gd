@@ -1,17 +1,19 @@
 class_name Charlie
 extends Node2D
-## Player entity: la petite Charlie — Voie B True 3D Hybride Translucent Refractive Slime.
-## Single cohesive 3D honey-coral living jelly shell over embedded 3D glossy eyes, rosy cheeks,
-## expressive mouth with 2 cute rounded white teeth, 3 glowing 3D golden vitality pearls,
-## suspended micro-bubbles, swallowed prey dissolving inside her belly, and real 2D background refraction.
+## Player entity: la petite Charlie — Voie B True 3D Dual-Shell Studio Ghibli Translucent Slime.
+## Sculpted single-mesh 3D honey-coral living jelly (baby-slime forehead dome, plump belly,
+## graceful flowing molten tail, two stubby rounded gel flippers) with heroic 3/4 3D yaw/banking,
+## inner volumetric shell + outer glossy clearcoat shell, 3 jewel-like golden amber vitality pearls,
+## expressive Ghibli eyes/cheeks/tiny fangs, shimmering micro-bubbles, and Beer-Lambert 2D refraction.
 
+const INNER_SHADER_PATH: String = "res://shaders/charlie_3d_inner.gdshader"
 const GEL_SHADER_PATH: String = "res://shaders/charlie_3d_gel.gdshader"
 const COMPOSITE_SHADER_PATH: String = "res://shaders/charlie_refract_composite.gdshader"
 
 const MAX_DROPLETS: int = 3
-const BODY_QUAD_SCALE: float = 3.6
-const BODY_HALF_SCALE: float = 1.8
-const SUBVIEWPORT_SIZE: int = 256
+const BODY_QUAD_SCALE: float = 4.8
+const BODY_HALF_SCALE: float = 2.4
+const SUBVIEWPORT_SIZE: int = 320
 
 const LOBE_COUNT: int = 5
 const CORE_BASE_RADIUS: float = 0.46
@@ -30,23 +32,27 @@ const LOBE_DAMPING: Array[float] = [8.0, 8.8, 8.8, 10.0, 10.0]
 const LOBE_MASS: Array[float] = [0.44, 0.36, 0.36, 0.28, 0.28]
 const LOBE_UNIFORM_NAMES: Array[StringName] = [&"lobe_0", &"lobe_1", &"lobe_2", &"lobe_3", &"lobe_4"]
 
-const MICRO_BUBBLE_RADII: Array[float] = [0.036, 0.028, 0.032, 0.022, 0.025]
+const PEARL_SIZE_VARIATION: Array[float] = [1.08, 0.94, 0.80]
+
+const MICRO_BUBBLE_RADII: Array[float] = [0.036, 0.028, 0.032, 0.022, 0.026, 0.020]
 const MICRO_BUBBLE_SEEDS: Array[Vector3] = [
-	Vector3(-0.24, -0.18, 0.08),
-	Vector3(0.23, -0.15, -0.08),
-	Vector3(-0.13, -0.32, -0.10),
-	Vector3(0.15, -0.28, 0.10),
-	Vector3(-0.02, -0.14, -0.12),
+	Vector3(-0.28, -0.22, 0.06),
+	Vector3(0.24, -0.18, -0.06),
+	Vector3(-0.16, -0.34, -0.10),
+	Vector3(0.16, -0.30, 0.10),
+	Vector3(-0.04, -0.16, -0.14),
+	Vector3(-0.34, -0.26, -0.16),
 ]
 
-const COLOR_EYE_DARK: Color = Color("#281014")
-const COLOR_IRIS_AMBER: Color = Color(0.96, 0.58, 0.22, 0.88)
-const COLOR_SCLERA: Color = Color(1.0, 0.985, 0.97, 0.96)
-const COLOR_MOUTH_FILL: Color = Color(0.24, 0.05, 0.11, 1.0)
-const COLOR_TONGUE: Color = Color("#ff7d9e")
-const COLOR_CHEEK_BLUSH: Color = Color(1.0, 0.36, 0.48, 1.0)
-const COLOR_TEETH: Color = Color(1.0, 0.995, 0.97, 1.0)
-const COLOR_CATCHLIGHT: Color = Color(1.0, 1.0, 1.0, 1.0)
+const COLOR_EYE_DARK: Color = Color("#210c08")
+const COLOR_SMILE_DARK: Color = Color("#3a1410")
+const COLOR_IRIS_AMBER: Color = Color(0.98, 0.64, 0.20, 0.92)
+const COLOR_SCLERA: Color = Color(1.0, 0.985, 0.96, 0.96)
+const COLOR_MOUTH_FILL: Color = Color(0.26, 0.06, 0.10, 1.0)
+const COLOR_TONGUE: Color = Color("#ff7c8e")
+const COLOR_CHEEK_BLUSH: Color = Color("#ff4838")
+const COLOR_TEETH: Color = Color(1.0, 0.996, 0.965, 1.0)
+const COLOR_CATCHLIGHT: Color = Color(1.0, 0.996, 0.98, 1.0)
 
 # Public API properties (preserved 100%)
 var world_size: float = Scales.BASE_SIZE
@@ -71,12 +77,15 @@ var _swallowed_layer: _SwallowedLayer = null
 var _composite_quad: Sprite2D = null
 
 # Shaders & Materials
+var _inner_mat: ShaderMaterial = null
 var _gel_mat: ShaderMaterial = null
 var _composite_mat: ShaderMaterial = null
 var _spark_mat: ShaderMaterial = null
 
 # 3D Scene Nodes inside SubViewport
 var _camera_3d: Camera3D = null
+var _slime_root: Node3D = null
+var _inner_shell: MeshInstance3D = null
 var _outer_shell: MeshInstance3D = null
 var _pearl_nodes: Array[MeshInstance3D] = []
 var _nascent_spark: MeshInstance3D = null
@@ -125,6 +134,15 @@ var _last_synced_size: float = -1.0
 var _prev_velocity: Vector2 = Vector2.ZERO
 var _prev_facing_angle: float = 0.0
 
+# Heroic 3/4 3D turn, banking, flowing molten tail & flipper lag state
+var _last_horiz_sign: float = 1.0
+var _rig_yaw: float = 0.22
+var _rig_pitch: float = 0.0
+var _rig_bank: float = 0.0
+var _tail_dir_world: Vector3 = Vector3(-0.88, -0.24, -0.40)
+var _tail_strength: float = 0.44
+var _fin_lag_world: Vector3 = Vector3.ZERO
+
 var _palette_core: Color = Color(1.0, 0.71, 0.42, 1.0)
 var _palette_edge: Color = Color(1.0, 0.42, 0.34, 1.0)
 var _palette_glow: Color = Color(1.0, 0.50, 0.28, 1.0)
@@ -152,9 +170,9 @@ var _lobe_rad: Array[float] = [0.30, 0.29, 0.29, 0.27, 0.27]
 
 # 3 internal 3D golden vitality pearls orbiting smoothly inside Charlie's lower belly (z in [-0.20, +0.20])
 var _pearl_pos_3d: Array[Vector3] = [
-	Vector3(-0.28, -0.39, 0.12),
-	Vector3(0.00, -0.45, -0.10),
-	Vector3(0.28, -0.38, 0.08),
+	Vector3(-0.26, -0.38, 0.10),
+	Vector3(0.02, -0.46, -0.08),
+	Vector3(0.26, -0.36, 0.08),
 ]
 var _pearl_vel_3d: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO, Vector3.ZERO]
 var _pearl_scales: Array[float] = [1.0, 1.0, 1.0]
@@ -239,18 +257,19 @@ func _setup_visuals() -> void:
 
 
 func _build_3d_scene() -> void:
-	# Perspective Camera3D centered on Charlie
+	# Calibrated Perspective Camera3D (fov 30, z = 6.4 -> visible half-height 1.715 units)
+	# Gives Charlie richer screen presence while ensuring her full sculpted molten tail NEVER clips!
 	_camera_3d = Camera3D.new()
 	_camera_3d.name = "CharlieCamera3D"
 	_camera_3d.projection = Camera3D.PROJECTION_PERSPECTIVE
-	_camera_3d.fov = 28.0
-	_camera_3d.position = Vector3(0.0, 0.0, 5.2)
+	_camera_3d.fov = 30.0
+	_camera_3d.position = Vector3(0.0, 0.0, 6.4)
 	_camera_3d.near = 0.5
 	_camera_3d.far = 20.0
 	_camera_3d.current = true
 	_subviewport.add_child(_camera_3d)
 
-	# SubViewport-isolated WorldEnvironment (warm soft ambient 0.55, linear tonemap for exact sRGB fidelity)
+	# SubViewport-isolated WorldEnvironment (linear tonemap for exact sRGB fidelity)
 	var world_env := WorldEnvironment.new()
 	world_env.name = "CharlieWorldEnvironment"
 	var env := Environment.new()
@@ -281,19 +300,40 @@ func _build_3d_scene() -> void:
 	rim_light.shadow_enabled = false
 	_subviewport.add_child(rim_light)
 
-	# Embedded Internal 3D Anatomy (sorting_offset 0.0..1.0, rendered BEFORE outer translucent shell!)
+	# Parent 3D Slime Rig Root for heroic 3/4 yaw, pitch & banking turn
+	_slime_root = Node3D.new()
+	_slime_root.name = "SlimeRoot"
+	_subviewport.add_child(_slime_root)
+
+	# High-density smooth sphere shared by BOTH inner volumetric & outer clearcoat shells (56x34)
+	var shell_mesh := SphereMesh.new()
+	shell_mesh.radius = 0.88
+	shell_mesh.height = 1.76
+	shell_mesh.radial_segments = 56
+	shell_mesh.rings = 34
+
+	# 1. Inner Volumetric 3D Honey-Coral Shell (cull_front, sorting_offset = -1.0, renders BEHIND anatomy!)
+	_inner_shell = MeshInstance3D.new()
+	_inner_shell.name = "InnerVolumetricShell"
+	_inner_shell.mesh = shell_mesh
+	_inner_shell.sorting_offset = -1.0
+	_inner_shell.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+	_inner_mat = ShaderMaterial.new()
+	var inner_shader: Shader = load(INNER_SHADER_PATH) as Shader
+	if inner_shader != null:
+		_inner_mat.shader = inner_shader
+	_inner_shell.material_override = _inner_mat
+	_slime_root.add_child(_inner_shell)
+
+	# 2. Embedded Internal 3D Anatomy (sorting_offset 0.24..0.75, suspended INSIDE the dual shells!)
 	_build_internal_pearls()
 	_build_internal_bubbles()
 	_build_face_rig()
 
-	# Outer Translucent 3D Soft-Body Slime Shell (sorting_offset = 2.0, renders OVER embedded anatomy!)
+	# 3. Outer Glossy Clearcoat 3D Slime Shell (cull_back, sorting_offset = 2.0, renders OVER anatomy!)
 	_outer_shell = MeshInstance3D.new()
 	_outer_shell.name = "OuterGelShell"
-	var shell_mesh := SphereMesh.new()
-	shell_mesh.radius = 0.90
-	shell_mesh.height = 1.80
-	shell_mesh.radial_segments = 48
-	shell_mesh.rings = 28
 	_outer_shell.mesh = shell_mesh
 	_outer_shell.sorting_offset = 2.0
 	_outer_shell.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -303,17 +343,17 @@ func _build_3d_scene() -> void:
 	if gel_shader != null:
 		_gel_mat.shader = gel_shader
 	_outer_shell.material_override = _gel_mat
-	_subviewport.add_child(_outer_shell)
+	_slime_root.add_child(_outer_shell)
 
 
 func _build_internal_pearls() -> void:
 	var pearls_root := Node3D.new()
 	pearls_root.name = "VitalityPearls"
-	_subviewport.add_child(pearls_root)
+	_slime_root.add_child(pearls_root)
 
 	var pearl_mesh := SphereMesh.new()
-	pearl_mesh.radius = 0.085
-	pearl_mesh.height = 0.170
+	pearl_mesh.radius = 0.102
+	pearl_mesh.height = 0.204
 	pearl_mesh.radial_segments = 24
 	pearl_mesh.rings = 14
 
@@ -335,8 +375,8 @@ func _build_internal_pearls() -> void:
 	_nascent_spark = MeshInstance3D.new()
 	_nascent_spark.name = "NascentRegenSpark"
 	var spark_mesh := SphereMesh.new()
-	spark_mesh.radius = 0.10
-	spark_mesh.height = 0.20
+	spark_mesh.radius = 0.105
+	spark_mesh.height = 0.210
 	spark_mesh.radial_segments = 18
 	spark_mesh.rings = 12
 	_nascent_spark.mesh = spark_mesh
@@ -352,7 +392,7 @@ func _build_internal_pearls() -> void:
 func _build_internal_bubbles() -> void:
 	var bubbles_root := Node3D.new()
 	bubbles_root.name = "MicroBubbles"
-	_subviewport.add_child(bubbles_root)
+	_slime_root.add_child(bubbles_root)
 
 	var bubble_mat: ShaderMaterial = _create_micro_bubble_material()
 	_bubble_nodes.clear()
@@ -377,10 +417,10 @@ func _build_internal_bubbles() -> void:
 func _build_face_rig() -> void:
 	_face_rig = Node3D.new()
 	_face_rig.name = "FaceRig"
-	_face_rig.position = Vector3(0.0, 0.14, 0.46)
-	_subviewport.add_child(_face_rig)
+	_face_rig.position = Vector3(0.0, 0.15, 0.50)
+	_slime_root.add_child(_face_rig)
 
-	# Soft subsurface rosy cheeks tucked beneath the eyes inside the gel
+	# Soft subsurface rosy-vermilion cheeks (#ff4838) tucked warmly beneath the eyes inside the gel
 	var cheek_mesh := SphereMesh.new()
 	cheek_mesh.radius = 1.0
 	cheek_mesh.height = 2.0
@@ -392,8 +432,8 @@ func _build_face_rig() -> void:
 	_left_cheek.name = "LeftCheek"
 	_left_cheek.mesh = cheek_mesh
 	_left_cheek.material_override = cheek_mat
-	_left_cheek.scale = Vector3(0.14, 0.08, 0.04)
-	_left_cheek.position = Vector3(-0.345, -0.095, 0.01)
+	_left_cheek.scale = Vector3(0.155, 0.088, 0.042)
+	_left_cheek.position = Vector3(-0.36, -0.095, 0.015)
 	_left_cheek.sorting_offset = 0.55
 	_left_cheek.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_face_rig.add_child(_left_cheek)
@@ -402,54 +442,56 @@ func _build_face_rig() -> void:
 	_right_cheek.name = "RightCheek"
 	_right_cheek.mesh = cheek_mesh
 	_right_cheek.material_override = cheek_mat
-	_right_cheek.scale = Vector3(0.14, 0.08, 0.04)
-	_right_cheek.position = Vector3(0.345, -0.095, 0.01)
+	_right_cheek.scale = Vector3(0.155, 0.088, 0.042)
+	_right_cheek.position = Vector3(0.36, -0.095, 0.015)
 	_right_cheek.sorting_offset = 0.55
 	_right_cheek.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_face_rig.add_child(_right_cheek)
 
-	# Shared eye materials & meshes
+	# Shared expressive Studio Ghibli eye materials & meshes
 	var eye_mat: ShaderMaterial = _create_eyeball_material()
 	var iris_mat: ShaderMaterial = _create_iris_amber_material()
 	var white_mat: StandardMaterial3D = _create_unshaded_color_material(COLOR_CATCHLIGHT, false)
 	var sclera_mat: ShaderMaterial = _create_sclera_material()
-	var happy_arc_mesh: ArrayMesh = _build_curved_tube_mesh(0.25, 0.078, 0.027, 14, 8)
+	var happy_arc_mesh: ArrayMesh = _build_curved_tube_mesh(0.26, 0.084, 0.028, 14, 8)
 	var happy_mat: StandardMaterial3D = _create_unshaded_color_material(COLOR_EYE_DARK, false)
 	happy_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var smile_mat: StandardMaterial3D = _create_unshaded_color_material(COLOR_SMILE_DARK, false)
+	smile_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 
 	var eyeball_mesh := SphereMesh.new()
-	eyeball_mesh.radius = 0.175
-	eyeball_mesh.height = 0.35
+	eyeball_mesh.radius = 0.188
+	eyeball_mesh.height = 0.376
 	eyeball_mesh.radial_segments = 24
 	eyeball_mesh.rings = 16
 
 	var sclera_mesh := SphereMesh.new()
-	sclera_mesh.radius = 0.184
-	sclera_mesh.height = 0.368
+	sclera_mesh.radius = 0.200
+	sclera_mesh.height = 0.400
 	sclera_mesh.radial_segments = 22
 	sclera_mesh.rings = 14
 
 	var iris_mesh := SphereMesh.new()
-	iris_mesh.radius = 0.112
-	iris_mesh.height = 0.224
+	iris_mesh.radius = 0.124
+	iris_mesh.height = 0.248
 	iris_mesh.radial_segments = 20
 	iris_mesh.rings = 12
 
 	var hi1_mesh := SphereMesh.new()
-	hi1_mesh.radius = 0.058
-	hi1_mesh.height = 0.116
+	hi1_mesh.radius = 0.064
+	hi1_mesh.height = 0.128
 	hi1_mesh.radial_segments = 16
 	hi1_mesh.rings = 10
 
 	var hi2_mesh := SphereMesh.new()
-	hi2_mesh.radius = 0.026
-	hi2_mesh.height = 0.052
+	hi2_mesh.radius = 0.029
+	hi2_mesh.height = 0.058
 	hi2_mesh.radial_segments = 12
 	hi2_mesh.rings = 8
 
-	# Build Left & Right 3D Eye Rigs
+	# Build Left & Right 3D Soulful Ghibli Eye Rigs
 	var left_parts: Dictionary = _create_eye_rig(
-		"LeftEye", Vector3(-0.265, 0.065, 0.0),
+		"LeftEye", Vector3(-0.275, 0.065, 0.0),
 		eyeball_mesh, sclera_mesh, iris_mesh, hi1_mesh, hi2_mesh, happy_arc_mesh,
 		eye_mat, sclera_mat, iris_mat, white_mat, happy_mat
 	)
@@ -463,7 +505,7 @@ func _build_face_rig() -> void:
 	_face_rig.add_child(_left_eye_rig)
 
 	var right_parts: Dictionary = _create_eye_rig(
-		"RightEye", Vector3(0.265, 0.065, 0.0),
+		"RightEye", Vector3(0.275, 0.065, 0.0),
 		eyeball_mesh, sclera_mesh, iris_mesh, hi1_mesh, hi2_mesh, happy_arc_mesh,
 		eye_mat, sclera_mat, iris_mat, white_mat, happy_mat
 	)
@@ -476,18 +518,18 @@ func _build_face_rig() -> void:
 	_right_eye_happy = right_parts["happy"] as MeshInstance3D
 	_face_rig.add_child(_right_eye_rig)
 
-	# Expressive 3D Mouth Rig & 2 Cute Rounded White Teeth
+	# Expressive 3D Mouth Rig & 2 Cute Tiny White Fang Tips
 	_mouth_rig = Node3D.new()
 	_mouth_rig.name = "MouthRig"
-	_mouth_rig.position = Vector3(0.0, -0.115, 0.055)
+	_mouth_rig.position = Vector3(0.0, -0.125, 0.055)
 	_face_rig.add_child(_mouth_rig)
 
-	# Joyful curved 3D smile arc (for idle / happy smile)
+	# Sweet curved 3D smile arc (flips softly into fragile pout at vitality 0!)
 	_mouth_smile = MeshInstance3D.new()
 	_mouth_smile.name = "SmileArc"
-	_mouth_smile.mesh = _build_curved_tube_mesh(0.23, -0.058, 0.018, 16, 8)
-	_mouth_smile.material_override = happy_mat
-	_mouth_smile.position = Vector3(0.0, 0.022, 0.022)
+	_mouth_smile.mesh = _build_curved_tube_mesh(0.24, -0.062, 0.019, 16, 8)
+	_mouth_smile.material_override = smile_mat
+	_mouth_smile.position = Vector3(0.0, 0.024, 0.022)
 	_mouth_smile.sorting_offset = 0.66
 	_mouth_smile.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_mouth_rig.add_child(_mouth_smile)
@@ -496,8 +538,8 @@ func _build_face_rig() -> void:
 	_mouth_cavity = MeshInstance3D.new()
 	_mouth_cavity.name = "MouthCavity"
 	var cav_mesh := SphereMesh.new()
-	cav_mesh.radius = 0.145
-	cav_mesh.height = 0.29
+	cav_mesh.radius = 0.148
+	cav_mesh.height = 0.296
 	cav_mesh.radial_segments = 22
 	cav_mesh.rings = 14
 	_mouth_cavity.mesh = cav_mesh
@@ -509,12 +551,12 @@ func _build_face_rig() -> void:
 	_mouth_cavity.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_mouth_rig.add_child(_mouth_cavity)
 
-	# Bright pink #ff7d9e 3D tongue nestled inside the mouth cavity
+	# Warm rosy-pink 3D tongue nestled inside the mouth cavity
 	_mouth_tongue = MeshInstance3D.new()
 	_mouth_tongue.name = "MouthTongue"
 	var tongue_mesh := SphereMesh.new()
-	tongue_mesh.radius = 0.088
-	tongue_mesh.height = 0.176
+	tongue_mesh.radius = 0.090
+	tongue_mesh.height = 0.180
 	tongue_mesh.radial_segments = 18
 	tongue_mesh.rings = 12
 	_mouth_tongue.mesh = tongue_mesh
@@ -526,32 +568,28 @@ func _build_face_rig() -> void:
 	_mouth_tongue.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_mouth_rig.add_child(_mouth_tongue)
 
-	# Two adorable little rounded white 3D teeth anchored at the upper lip (visible in smile & chomp!)
-	var tooth_mesh := CapsuleMesh.new()
-	tooth_mesh.radius = 0.025
-	tooth_mesh.height = 0.084
-	tooth_mesh.radial_segments = 14
-	tooth_mesh.rings = 6
+	# Two adorable cute tiny white fang tips anchored at the upper smile corners!
+	var fang_mesh: ArrayMesh = _build_fang_mesh(0.032, 0.072, 12, 7)
 	var tooth_mat: ShaderMaterial = _create_tooth_material()
 
 	_tooth_left = MeshInstance3D.new()
 	_tooth_left.name = "LeftTooth"
-	_tooth_left.mesh = tooth_mesh
+	_tooth_left.mesh = fang_mesh
 	_tooth_left.material_override = tooth_mat
-	_tooth_left.scale = Vector3(1.06, 1.0, 0.72)
-	_tooth_left.position = Vector3(-0.058, -0.024, 0.026)
-	_tooth_left.rotation_degrees = Vector3(0.0, 0.0, 9.0)
+	_tooth_left.scale = Vector3(1.0, 1.0, 0.78)
+	_tooth_left.position = Vector3(-0.076, -0.010, 0.028)
+	_tooth_left.rotation_degrees = Vector3(0.0, 0.0, 10.0)
 	_tooth_left.sorting_offset = 0.75
 	_tooth_left.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_mouth_rig.add_child(_tooth_left)
 
 	_tooth_right = MeshInstance3D.new()
 	_tooth_right.name = "RightTooth"
-	_tooth_right.mesh = tooth_mesh
+	_tooth_right.mesh = fang_mesh
 	_tooth_right.material_override = tooth_mat
-	_tooth_right.scale = Vector3(1.06, 1.0, 0.72)
-	_tooth_right.position = Vector3(0.058, -0.024, 0.026)
-	_tooth_right.rotation_degrees = Vector3(0.0, 0.0, -9.0)
+	_tooth_right.scale = Vector3(1.0, 1.0, 0.78)
+	_tooth_right.position = Vector3(0.076, -0.010, 0.028)
+	_tooth_right.rotation_degrees = Vector3(0.0, 0.0, -10.0)
 	_tooth_right.sorting_offset = 0.75
 	_tooth_right.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_mouth_rig.add_child(_tooth_right)
@@ -580,10 +618,10 @@ func _create_eye_rig(
 	sclera.name = "Sclera"
 	sclera.mesh = sclera_mesh
 	sclera.material_override = sclera_mat
-	sclera.scale = Vector3(1.0, 1.14, 0.62)
-	sclera.position = Vector3(0.0, 0.0, -0.032)
+	sclera.scale = Vector3(1.0, 1.12, 0.58)
+	sclera.position = Vector3(0.0, 0.0, -0.036)
 	sclera.sorting_offset = 0.59
-	sclera.visible = false
+	sclera.visible = true
 	sclera.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	rig.add_child(sclera)
 
@@ -595,7 +633,7 @@ func _create_eye_rig(
 	eyeball.name = "Eyeball"
 	eyeball.mesh = eyeball_mesh
 	eyeball.material_override = eye_mat
-	eyeball.scale = Vector3(0.94, 1.08, 0.80)
+	eyeball.scale = Vector3(0.95, 1.08, 0.80)
 	eyeball.sorting_offset = 0.63
 	eyeball.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	ball_root.add_child(eyeball)
@@ -604,8 +642,8 @@ func _create_eye_rig(
 	iris.name = "AmberIris"
 	iris.mesh = iris_mesh
 	iris.material_override = iris_mat
-	iris.scale = Vector3(1.06, 0.66, 0.42)
-	iris.position = Vector3(0.0, -0.056, 0.108)
+	iris.scale = Vector3(1.10, 0.68, 0.44)
+	iris.position = Vector3(0.0, -0.062, 0.118)
 	iris.sorting_offset = 0.67
 	iris.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	ball_root.add_child(iris)
@@ -615,7 +653,7 @@ func _create_eye_rig(
 	hi1.mesh = hi1_mesh
 	hi1.material_override = white_mat
 	hi1.scale = Vector3(1.0, 1.0, 0.52)
-	hi1.position = Vector3(-0.056, 0.066, 0.124)
+	hi1.position = Vector3(-0.062, 0.072, 0.136)
 	hi1.sorting_offset = 0.73
 	hi1.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	ball_root.add_child(hi1)
@@ -625,7 +663,7 @@ func _create_eye_rig(
 	hi2.mesh = hi2_mesh
 	hi2.material_override = white_mat
 	hi2.scale = Vector3(1.0, 1.0, 0.52)
-	hi2.position = Vector3(0.056, -0.048, 0.124)
+	hi2.position = Vector3(0.060, -0.052, 0.136)
 	hi2.sorting_offset = 0.73
 	hi2.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	ball_root.add_child(hi2)
@@ -649,6 +687,60 @@ func _create_eye_rig(
 		"hi2": hi2,
 		"happy": happy_arc,
 	}
+
+
+func _build_fang_mesh(base_radius: float, length: float, radial: int, rings: int) -> ArrayMesh:
+	# Cute smoothly-rounded tiny baby fang tip (widest at upper gum root, tapering gracefully to a soft tip!)
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+
+	var ring_pts: Array[PackedVector3Array] = []
+	var ring_nrms: Array[PackedVector3Array] = []
+	for i: int in range(rings + 1):
+		var t: float = float(i) / float(rings) # 0 = top gum root, 1 = rounded lower tip
+		var y: float = (0.35 - t) * length
+		var r: float = 0.0008
+		if i > 0 and i < rings:
+			# Rounded top cap blending smoothly into a tapered cute fang tip
+			var top_round: float = sin(clampf(t * 4.2, 0.0, 1.0) * PI * 0.5)
+			var tip_taper: float = pow(maxf(1.0 - t, 0.0), 0.78)
+			r = maxf(base_radius * top_round * tip_taper, 0.001)
+		var pts := PackedVector3Array()
+		var nrms := PackedVector3Array()
+		pts.resize(radial)
+		nrms.resize(radial)
+		for j: int in range(radial):
+			var ang: float = (float(j) / float(radial)) * TAU
+			var cx: float = cos(ang)
+			var cz: float = sin(ang)
+			pts[j] = Vector3(cx * r, y, cz * r)
+			var ny: float = 0.55 if i == 0 else (-0.85 if i == rings else -0.22)
+			nrms[j] = Vector3(cx, ny, cz).normalized()
+		ring_pts.append(pts)
+		ring_nrms.append(nrms)
+
+	for i: int in range(rings):
+		var r0: PackedVector3Array = ring_pts[i]
+		var r1: PackedVector3Array = ring_pts[i + 1]
+		var n0: PackedVector3Array = ring_nrms[i]
+		var n1: PackedVector3Array = ring_nrms[i + 1]
+		for j: int in range(radial):
+			var jn: int = (j + 1) % radial
+			st.set_normal(n0[j])
+			st.add_vertex(r0[j])
+			st.set_normal(n1[j])
+			st.add_vertex(r1[j])
+			st.set_normal(n1[jn])
+			st.add_vertex(r1[jn])
+
+			st.set_normal(n0[j])
+			st.add_vertex(r0[j])
+			st.set_normal(n1[jn])
+			st.add_vertex(r1[jn])
+			st.set_normal(n0[jn])
+			st.add_vertex(r0[jn])
+
+	return st.commit()
 
 
 func _build_curved_tube_mesh(span_x: float, arch_y: float, radius: float, segs: int, radial: int) -> ArrayMesh:
@@ -729,26 +821,34 @@ func _create_unshaded_color_material(col: Color, alpha_blend: bool) -> StandardM
 
 
 func _create_pearl_material() -> ShaderMaterial:
-	# Solid luminous honey-gold pearl: bright warm core, soft lighter rim that
-	# fades (never darkens) so it never reads as a hollow ring at small sizes.
+	# Jewel-like translucent golden amber vitality pearl:
+	# Deep warm orange-gold rim (#ff8c1a) -> radiant honey-gold body (#ffd24c) ->
+	# luminous lower-right internal glow -> crisp bright cream-white center specular dot!
 	var sh := Shader.new()
 	sh.code = """
 shader_type spatial;
 render_mode depth_draw_opaque, cull_back, unshaded;
 
-uniform vec4 core_col : source_color = vec4(1.0, 0.95, 0.72, 1.0);
-uniform vec4 mid_col : source_color = vec4(1.0, 0.80, 0.36, 1.0);
+uniform vec4 rim_col : source_color = vec4(1.000, 0.549, 0.102, 1.0);  // #ff8c1a warm orange-gold rim
+uniform vec4 body_col : source_color = vec4(1.000, 0.824, 0.298, 1.0); // #ffd24c radiant honey-gold
+uniform vec4 glow_col : source_color = vec4(1.000, 0.935, 0.620, 1.0); // #ffee9e luminous amber core
 
 void fragment() {
 	vec3 N = normalize(NORMAL);
 	vec3 V = normalize(VIEW);
 	float ndv = clamp(dot(N, V), 0.0, 1.0);
-	vec3 L = normalize(vec3(-0.48, 0.62, 0.62));
-	vec3 H = normalize(L + V);
-	float spec = smoothstep(0.90, 0.985, max(dot(N, H), 0.0));
-	vec3 col = mix(mid_col.rgb, core_col.rgb, smoothstep(0.15, 0.85, ndv));
-	col = mix(col, vec3(1.0, 1.0, 0.97), spec * 0.9);
-	ALBEDO = col;
+	vec3 L_key = normalize(vec3(-0.46, 0.64, 0.62));
+	vec3 L_bot = normalize(vec3(0.42, -0.60, 0.68));
+	vec3 H = normalize(L_key + V);
+
+	float core_grad = smoothstep(0.18, 0.88, ndv);
+	vec3 col = mix(rim_col.rgb, body_col.rgb, core_grad);
+	float inner_caustic = pow(max(dot(N, L_bot), 0.0), 2.0) * smoothstep(0.15, 0.78, ndv);
+	col = mix(col, glow_col.rgb, clamp(inner_caustic * 0.65 + pow(max(ndv, 0.0), 2.4) * 0.34, 0.0, 0.82));
+
+	float spec_dot = smoothstep(0.915, 0.980, max(dot(N, H), 0.0));
+	col = mix(col, vec3(1.0, 0.992, 0.945), spec_dot * 0.96);
+	ALBEDO = clamp(col, vec3(0.0), vec3(1.0));
 }
 """
 	var mat := ShaderMaterial.new()
@@ -763,15 +863,15 @@ shader_type spatial;
 render_mode blend_mix, depth_draw_never, cull_back, unshaded;
 
 uniform float spark_intensity = 0.0;
-uniform vec4 spark_col : source_color = vec4(1.0, 0.92, 0.52, 1.0);
+uniform vec4 spark_col : source_color = vec4(1.0, 0.88, 0.42, 1.0);
 
 void fragment() {
 	vec3 N = normalize(NORMAL);
 	vec3 V = normalize(VIEW);
 	float ndv = clamp(dot(N, V), 0.0, 1.0);
-	vec3 col = mix(spark_col.rgb, vec3(1.0, 0.99, 0.90), smoothstep(0.35, 0.92, ndv));
+	vec3 col = mix(spark_col.rgb, vec3(1.0, 0.99, 0.88), smoothstep(0.32, 0.90, ndv));
 	ALBEDO = col;
-	ALPHA = clamp(pow(ndv, 1.35) * spark_intensity, 0.0, 0.95);
+	ALPHA = clamp(pow(max(ndv, 0.0), 1.35) * spark_intensity, 0.0, 0.95);
 }
 """
 	var mat := ShaderMaterial.new()
@@ -785,19 +885,19 @@ func _create_micro_bubble_material() -> ShaderMaterial:
 shader_type spatial;
 render_mode blend_mix, depth_draw_never, cull_back, unshaded;
 
-uniform vec4 tint_col : source_color = vec4(1.0, 0.94, 0.86, 1.0);
+uniform vec4 tint_col : source_color = vec4(1.0, 0.92, 0.72, 1.0);
 
 void fragment() {
 	vec3 N = normalize(NORMAL);
 	vec3 V = normalize(VIEW);
 	float ndv = clamp(dot(N, V), 0.0, 1.0);
-	float fres = pow(1.0 - ndv, 2.0);
+	float fres = pow(max(1.0 - ndv, 0.0), 2.0);
 	vec3 L = normalize(vec3(-0.5, 0.65, 0.58));
 	vec3 H = normalize(L + V);
-	float spec = smoothstep(0.93, 0.99, max(dot(N, H), 0.0));
+	float spec = smoothstep(0.92, 0.985, max(dot(N, H), 0.0));
 
-	vec3 col = mix(tint_col.rgb, vec3(1.0), spec * 0.95);
-	float alpha = clamp(0.06 + fres * 0.36 + spec * 0.65, 0.0, 0.82);
+	vec3 col = mix(tint_col.rgb, vec3(1.0, 0.995, 0.96), spec * 0.95);
+	float alpha = clamp(0.08 + fres * 0.40 + spec * 0.72, 0.0, 0.86);
 	ALBEDO = col;
 	ALPHA = alpha;
 }
@@ -808,13 +908,14 @@ void fragment() {
 
 
 func _create_eyeball_material() -> ShaderMaterial:
+	# Glossy dark-espresso (#210c08) Studio Ghibli eye with subtle warm chestnut curved depth
 	var sh := Shader.new()
 	sh.code = """
 shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back, unshaded;
 
-uniform vec4 dark_col : source_color = vec4(0.115, 0.040, 0.052, 1.0);
-uniform vec4 sheen_col : source_color = vec4(0.26, 0.10, 0.11, 1.0);
+uniform vec4 dark_col : source_color = vec4(0.129, 0.047, 0.031, 1.0);  // #210c08 glossy dark espresso
+uniform vec4 sheen_col : source_color = vec4(0.320, 0.125, 0.075, 1.0); // warm espresso-chestnut gloss
 
 void fragment() {
 	vec3 N = normalize(NORMAL);
@@ -822,7 +923,8 @@ void fragment() {
 	float ndv = clamp(dot(N, V), 0.0, 1.0);
 	vec3 L = normalize(vec3(-0.45, 0.55, 0.70));
 	float wrap = clamp((dot(N, L) + 0.30) / 1.30, 0.0, 1.0);
-	vec3 col = mix(dark_col.rgb * 0.85, sheen_col.rgb, pow(1.0 - ndv, 2.5) * 0.42 + wrap * 0.14);
+	float rim_sheen = pow(max(1.0 - ndv, 0.0), 2.4) * 0.44 + wrap * 0.14;
+	vec3 col = mix(dark_col.rgb * 0.86, sheen_col.rgb, clamp(rim_sheen, 0.0, 0.65));
 	ALBEDO = col;
 	ALPHA = 1.0;
 }
@@ -838,14 +940,14 @@ func _create_sclera_material() -> ShaderMaterial:
 shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back, unshaded;
 
-uniform vec4 sclera_col : source_color = vec4(1.0, 0.985, 0.97, 1.0);
-uniform vec4 outline_col : source_color = vec4(0.18, 0.07, 0.09, 1.0);
+uniform vec4 sclera_col : source_color = vec4(1.0, 0.985, 0.96, 1.0);
+uniform vec4 outline_col : source_color = vec4(0.16, 0.06, 0.05, 1.0);
 
 void fragment() {
 	vec3 N = normalize(NORMAL);
 	vec3 V = normalize(VIEW);
 	float ndv = clamp(dot(N, V), 0.0, 1.0);
-	float edge = 1.0 - smoothstep(0.24, 0.52, ndv);
+	float edge = 1.0 - smoothstep(0.22, 0.50, ndv);
 	ALBEDO = mix(sclera_col.rgb, outline_col.rgb, edge * 0.88);
 	ALPHA = 1.0;
 }
@@ -856,21 +958,22 @@ void fragment() {
 
 
 func _create_iris_amber_material() -> ShaderMaterial:
+	# Glowing warm amber-gold lower iris crescent inside Charlie's glossy espresso eyes
 	var sh := Shader.new()
 	sh.code = """
 shader_type spatial;
 render_mode blend_mix, depth_draw_never, cull_back, unshaded;
 
-uniform vec4 iris_outer : source_color = vec4(0.94, 0.52, 0.18, 1.0);
-uniform vec4 iris_inner : source_color = vec4(1.0, 0.80, 0.36, 1.0);
+uniform vec4 iris_outer : source_color = vec4(0.92, 0.48, 0.12, 1.0);
+uniform vec4 iris_inner : source_color = vec4(1.00, 0.84, 0.36, 1.0);
 
 void fragment() {
 	vec3 N = normalize(NORMAL);
 	vec3 V = normalize(VIEW);
 	float ndv = clamp(dot(N, V), 0.0, 1.0);
-	vec3 col = mix(iris_outer.rgb, iris_inner.rgb, smoothstep(0.30, 0.90, ndv));
+	vec3 col = mix(iris_outer.rgb, iris_inner.rgb, smoothstep(0.26, 0.88, ndv));
 	ALBEDO = col;
-	ALPHA = clamp(pow(ndv, 1.45) * 0.86, 0.0, 0.88);
+	ALPHA = clamp(pow(max(ndv, 0.0), 1.40) * 0.92, 0.0, 0.94);
 }
 """
 	var mat := ShaderMaterial.new()
@@ -879,19 +982,20 @@ void fragment() {
 
 
 func _create_cheek_material() -> ShaderMaterial:
+	# Soft rosy-vermilion (#ff4838) subsurface blush tucked under Charlie's eyes
 	var sh := Shader.new()
 	sh.code = """
 shader_type spatial;
 render_mode blend_mix, depth_draw_never, cull_back, unshaded;
 
-uniform vec4 cheek_col : source_color = vec4(1.0, 0.34, 0.46, 1.0);
+uniform vec4 cheek_col : source_color = vec4(1.000, 0.282, 0.220, 1.0); // #ff4838 rosy-vermilion
 
 void fragment() {
 	vec3 N = normalize(NORMAL);
 	vec3 V = normalize(VIEW);
 	float ndv = clamp(dot(N, V), 0.0, 1.0);
 	ALBEDO = cheek_col.rgb;
-	ALPHA = clamp(pow(ndv, 1.85) * 0.58, 0.0, 0.62);
+	ALPHA = clamp(pow(max(ndv, 0.0), 1.75) * 0.66, 0.0, 0.70);
 }
 """
 	var mat := ShaderMaterial.new()
@@ -905,7 +1009,7 @@ func _create_mouth_cavity_material() -> ShaderMaterial:
 shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back, unshaded;
 
-uniform vec4 mouth_col : source_color = vec4(0.24, 0.05, 0.11, 1.0);
+uniform vec4 mouth_col : source_color = vec4(0.26, 0.06, 0.10, 1.0);
 
 void fragment() {
 	vec3 N = normalize(NORMAL);
@@ -927,7 +1031,7 @@ func _create_tongue_material() -> ShaderMaterial:
 shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back, unshaded;
 
-uniform vec4 tongue_col : source_color = vec4(1.0, 0.49, 0.62, 1.0);
+uniform vec4 tongue_col : source_color = vec4(1.0, 0.49, 0.56, 1.0);
 
 void fragment() {
 	vec3 N = normalize(NORMAL);
@@ -948,15 +1052,15 @@ func _create_tooth_material() -> ShaderMaterial:
 shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back, unshaded;
 
-uniform vec4 tooth_col : source_color = vec4(1.0, 0.995, 0.97, 1.0);
-uniform vec4 edge_col : source_color = vec4(0.32, 0.12, 0.16, 1.0);
+uniform vec4 tooth_col : source_color = vec4(1.0, 0.996, 0.965, 1.0);
+uniform vec4 edge_col : source_color = vec4(0.36, 0.14, 0.12, 1.0);
 
 void fragment() {
 	vec3 N = normalize(NORMAL);
 	vec3 V = normalize(VIEW);
 	float ndv = clamp(dot(N, V), 0.0, 1.0);
-	float rim = pow(1.0 - ndv, 3.2);
-	ALBEDO = mix(tooth_col.rgb, edge_col.rgb, rim * 0.48);
+	float rim = pow(max(1.0 - ndv, 0.0), 3.0);
+	ALBEDO = mix(tooth_col.rgb, edge_col.rgb, rim * 0.44);
 	ALPHA = 1.0;
 }
 """
@@ -973,6 +1077,10 @@ func set_palette(core: Color, edge: Color, glow: Color = Color(1.0, 0.50, 0.28, 
 	_palette_core = core
 	_palette_edge = edge
 	_palette_glow = glow
+	if _inner_mat != null:
+		_inner_mat.set_shader_parameter("core_color", _palette_core)
+		_inner_mat.set_shader_parameter("edge_color", _palette_edge)
+		_inner_mat.set_shader_parameter("glow_color", _palette_glow)
 	if _gel_mat != null:
 		_gel_mat.set_shader_parameter("core_color", _palette_core)
 		_gel_mat.set_shader_parameter("edge_color", _palette_edge)
@@ -1012,6 +1120,13 @@ func reset_charlie(pos: Vector2, new_size: float) -> void:
 	_face_tilt = 0.0
 	_pop_scale = 0.0
 	_pop_vel = 0.0
+	_last_horiz_sign = 1.0
+	_rig_yaw = 0.22
+	_rig_pitch = 0.0
+	_rig_bank = 0.0
+	_tail_dir_world = Vector3(-0.88, -0.24, -0.40).normalized()
+	_tail_strength = 0.44
+	_fin_lag_world = Vector3.ZERO
 	_flavor_intensity = 0.0
 	_flavor_color = _palette_core
 	_swallowed_prey.clear()
@@ -1236,11 +1351,45 @@ func step_motion(
 	_prev_velocity = velocity
 	_prev_facing_angle = facing_angle
 
-	# Gentle playful face tilt following swim direction
-	var swim_x_sign: float = 1.0 if cos(facing_angle) >= 0.0 else -1.0
+	# Gentle playful face tilt & heroic 3/4 3D yaw/pitch/bank following swim direction
+	var vel_x_norm: float = clampf(velocity.x / maxf(base_max_speed, 1.0), -1.0, 1.0)
 	var vel_y_norm: float = clampf(velocity.y / maxf(base_max_speed, 1.0), -1.0, 1.0)
-	var target_tilt: float = clampf(vel_y_norm * 0.14 * swim_x_sign, -0.16, 0.16)
+	if absf(velocity.x) > world_size * 0.35:
+		_last_horiz_sign = 1.0 if velocity.x >= 0.0 else -1.0
+	elif speed > world_size * 0.25 and absf(cos(facing_angle)) > 0.25:
+		_last_horiz_sign = 1.0 if cos(facing_angle) >= 0.0 else -1.0
+
+	var target_tilt: float = clampf(vel_y_norm * 0.14 * _last_horiz_sign, -0.16, 0.16)
 	_face_tilt = lerpf(_face_tilt, target_tilt, 1.0 - exp(-9.0 * step_dt))
+
+	# Smooth 3D heroic 3/4 rig yaw (±0.34 rad), pitch (±0.16 rad) & bank (±0.18 rad)
+	var rest_yaw: float = _last_horiz_sign * 0.22
+	var swim_blend: float = clampf(speed_norm * 1.15, 0.0, 1.0)
+	var target_yaw: float = clampf(lerpf(rest_yaw, vel_x_norm * 0.34, swim_blend), -0.34, 0.34)
+	var target_pitch: float = clampf(vel_y_norm * 0.16, -0.16, 0.16)
+	var target_bank: float = clampf(-vel_y_norm * 0.14 * _last_horiz_sign - clampf(ang_vel * 0.014, -0.10, 0.10), -0.18, 0.18)
+	var rig_rate: float = 1.0 - exp(-7.8 * step_dt)
+	_rig_yaw = lerpf(_rig_yaw, target_yaw, rig_rate)
+	_rig_pitch = lerpf(_rig_pitch, target_pitch, rig_rate)
+	_rig_bank = lerpf(_rig_bank, target_bank, rig_rate)
+
+	# Flowing sculpted molten tail direction (smoothly trails opposite 3D swim velocity + graceful resting sweep)
+	var rest_tail := Vector3(-_last_horiz_sign * 0.88, -0.24, -0.40).normalized()
+	var target_tail_world: Vector3 = rest_tail
+	var target_fin_lag := Vector3.ZERO
+	if speed_norm > 0.08 and speed > 0.001:
+		var swim_dir_3d := Vector3(velocity.x, -velocity.y, 0.0).normalized()
+		var move_tail := Vector3(-swim_dir_3d.x * 0.92, -swim_dir_3d.y * 0.86 - 0.14, -0.38).normalized()
+		target_tail_world = rest_tail.lerp(move_tail, clampf(speed_norm * 1.4, 0.0, 1.0)).normalized()
+		target_fin_lag = (-swim_dir_3d * minf(speed_norm * 0.40, 0.45)) + Vector3(0.0, 0.0, -0.12 * minf(speed_norm, 1.0))
+	_tail_dir_world = _tail_dir_world.lerp(target_tail_world, 1.0 - exp(-8.0 * step_dt))
+	if _tail_dir_world.length_squared() > 0.0001:
+		_tail_dir_world = _tail_dir_world.normalized()
+	else:
+		_tail_dir_world = rest_tail
+	var target_tail_str: float = clampf(0.44 + speed_norm * 0.50 + (0.20 if dash_timer > 0.0 else 0.0), 0.42, 1.18)
+	_tail_strength = lerpf(_tail_strength, target_tail_str, 1.0 - exp(-7.2 * step_dt))
+	_fin_lag_world = _fin_lag_world.lerp(target_fin_lag, 1.0 - exp(-8.5 * step_dt))
 
 	# Expressive reactions to nearest prey & predator
 	var prey_proximity: float = 0.0
@@ -1543,13 +1692,26 @@ func _update_3d_rig_and_uniforms(palette: Dictionary) -> void:
 	if invuln_timer > 0.0:
 		_invuln_flash = 0.5 + 0.5 * sin(_time * 26.0)
 
+	# Apply smooth heroic 3/4 3D turn (yaw ±0.34, pitch ±0.16, bank ±0.18) to parent _slime_root
+	var inv_basis := Basis.IDENTITY
+	if _slime_root != null:
+		_slime_root.rotation = Vector3(_rig_pitch, _rig_yaw, _rig_bank)
+		inv_basis = _slime_root.basis.inverse()
+
+	var tail_dir_local: Vector3 = inv_basis * _tail_dir_world
+	if tail_dir_local.length_squared() > 0.0001:
+		tail_dir_local = tail_dir_local.normalized()
+	else:
+		tail_dir_local = Vector3(-0.88, -0.24, -0.40).normalized()
+	var fin_lag_local: Vector3 = inv_basis * _fin_lag_world
+
 	# Compute soft-body inertial centroid & stretch for embedded 3D anatomy
 	var all_centroid: Vector2 = (_lobe_pos[0] + _lobe_pos[1] + _lobe_pos[2] + _lobe_pos[3] + _lobe_pos[4]) * 0.2
 	var front_centroid: Vector2 = (_lobe_pos[3] + _lobe_pos[4]) * 0.5
-	var lobe_shift_2d: Vector2 = all_centroid * 0.45 + front_centroid * 0.18
+	var lobe_shift_2d: Vector2 = all_centroid * 0.35 + front_centroid * 0.14
 	var lobe_shift_3d := Vector3(lobe_shift_2d.x, -lobe_shift_2d.y, 0.0)
 
-	# 1. Update 3D Vitality Pearls inside lower belly
+	# 1. Update 3 Jewel-Like Golden Amber Vitality Pearls suspended inside lower belly
 	for i: int in range(mini(_pearl_nodes.size(), MAX_DROPLETS)):
 		var pearl_node: MeshInstance3D = _pearl_nodes[i]
 		var sc: float = _pearl_scales[i]
@@ -1558,67 +1720,53 @@ func _update_3d_rig_and_uniforms(palette: Dictionary) -> void:
 		else:
 			pearl_node.visible = true
 			var breathe: float = 1.0 + 0.06 * sin(_time * 3.2 + float(i) * 1.9)
-			var final_sc: float = sc * breathe
+			var size_var: float = PEARL_SIZE_VARIATION[i] if i < PEARL_SIZE_VARIATION.size() else 1.0
+			var final_sc: float = sc * breathe * size_var
 			pearl_node.scale = Vector3(final_sc, final_sc, final_sc)
-			pearl_node.position = _pearl_pos_3d[i] + lobe_shift_3d * 0.45
+			pearl_node.position = _pearl_pos_3d[i] + lobe_shift_3d * 0.38
 
 	_sync_nascent_spark()
 
-	# 2. Update 5 Suspended 3D Micro-Bubbles (lava-lamp lazy buoyancy)
+	# 2. Update 6 Shimmering 3D Micro-Bubbles near lower belly & molten tail root
 	for i: int in range(_bubble_nodes.size()):
 		var b_node: MeshInstance3D = _bubble_nodes[i]
 		var base_p: Vector3 = MICRO_BUBBLE_SEEDS[i]
+		if i == _bubble_nodes.size() - 1:
+			base_p = tail_dir_local * 0.52 + Vector3(0.0, -0.10, 0.0)
 		var drift := Vector3(
-			sin(_time * (0.72 + float(i) * 0.14) + float(i) * 2.1) * 0.075,
-			cos(_time * (0.64 + float(i) * 0.11) + float(i) * 1.6) * 0.085,
-			sin(_time * (0.55 + float(i) * 0.13) + float(i) * 2.7) * 0.075
+			sin(_time * (0.72 + float(i) * 0.14) + float(i) * 2.1) * 0.065,
+			cos(_time * (0.64 + float(i) * 0.11) + float(i) * 1.6) * 0.075,
+			sin(_time * (0.55 + float(i) * 0.13) + float(i) * 2.7) * 0.065
 		)
-		var b_pos: Vector3 = base_p + drift + _bubble_lag + lobe_shift_3d * 0.35
-		if b_pos.length() > 0.62:
-			b_pos = b_pos.normalized() * 0.62
+		var b_pos: Vector3 = base_p + drift + _bubble_lag + lobe_shift_3d * 0.30
+		if b_pos.length() > 0.72:
+			b_pos = b_pos.normalized() * 0.72
 		b_node.position = b_pos
 
-	# 3. Update Embedded 3D Face Rig (at z = +0.46, gently shifting/tilting with look_angle & inertia)
-	var face_offset_3d := Vector2(0.0, 0.14)
+	# 3. Update Embedded 3D Face Rig (at z = +0.50 in _slime_root local space)
+	var face_offset_3d := Vector2(0.0, 0.15)
 	if _face_rig != null:
 		var look_2d: Vector2 = Vector2.from_angle(look_angle)
 		var look_3d := Vector2(look_2d.x, -look_2d.y)
 		var fwd: Vector2 = Vector2.from_angle(facing_angle)
 		var side: Vector2 = Vector2(-fwd.y, fwd.x)
-		var tail_jiggle_tilt: float = _lobe_pos[0].dot(side) * 0.24
-		var total_tilt: float = clampf(_face_tilt + tail_jiggle_tilt, -0.22, 0.22)
+		var tail_jiggle_tilt: float = _lobe_pos[0].dot(side) * 0.16
+		var total_tilt: float = clampf(_face_tilt * 0.55 + tail_jiggle_tilt, -0.16, 0.16)
 
 		var breath_y: float = cos(_time * 2.7) * 0.012
-		var fx: float = clampf(look_3d.x * 0.10 + lobe_shift_3d.x * 0.40, -0.16, 0.16)
-		var fy: float = clampf(0.14 + look_3d.y * 0.07 + lobe_shift_3d.y * 0.35 + breath_y, -0.02, 0.26)
+		var fx: float = clampf(look_3d.x * 0.065 + lobe_shift_3d.x * 0.25, -0.11, 0.11)
+		var fy: float = clampf(0.15 + look_3d.y * 0.055 + lobe_shift_3d.y * 0.24 + breath_y, 0.02, 0.25)
 		face_offset_3d = Vector2(fx, fy)
-		_face_rig.position = Vector3(fx, fy, 0.46)
-		# Gentle 3D yaw/pitch toward look direction + playful Z tilt (negated for 3D right-hand rule)
-		_face_rig.rotation = Vector3(-look_3d.y * 0.14, look_3d.x * 0.18, -total_tilt)
+		_face_rig.position = Vector3(fx, fy, 0.50)
+		_face_rig.rotation = Vector3(-look_3d.y * 0.09, look_3d.x * 0.11, -total_tilt)
 
 		_update_3d_eyes_and_mouth(look_3d)
 
-	# 4. Update Outer 3D Gel Shell Shader Uniforms
+	# 4. Sync BOTH Inner Volumetric Shell & Outer Glossy Clearcoat Shell with IDENTICAL deformation uniforms!
 	var flavor_vec := Color(_flavor_color.r, _flavor_color.g, _flavor_color.b, _flavor_intensity)
-	if _gel_mat != null:
-		_gel_mat.set_shader_parameter("core_color", core_col)
-		_gel_mat.set_shader_parameter("edge_color", edge_col)
-		_gel_mat.set_shader_parameter("glow_color", glow_col)
-		_gel_mat.set_shader_parameter("flavor_tint", flavor_vec)
-		_gel_mat.set_shader_parameter("core_radius", _core_radius)
-		_gel_mat.set_shader_parameter("wobble_amp", _wobble_amp)
-		_gel_mat.set_shader_parameter("fear_ripple", _fear_ripple)
-		_gel_mat.set_shader_parameter("vitality_ratio", _vitality_ratio)
-		_gel_mat.set_shader_parameter("invuln_flash", _invuln_flash)
-		_gel_mat.set_shader_parameter("time_sec", _time)
-		_gel_mat.set_shader_parameter("gulp_phase", _gulp_phase)
-		_gel_mat.set_shader_parameter("gulp_intensity", _gulp_intensity)
-		_gel_mat.set_shader_parameter("facing_dir", Vector2(cos(facing_angle), -sin(facing_angle)))
-		_gel_mat.set_shader_parameter("face_offset", face_offset_3d)
-
-		for i: int in range(LOBE_COUNT):
-			var lp: Vector2 = _lobe_pos[i]
-			_gel_mat.set_shader_parameter(LOBE_UNIFORM_NAMES[i], Vector3(lp.x, -lp.y, _lobe_rad[i]))
+	var facing_vec := Vector2(cos(facing_angle), -sin(facing_angle))
+	_apply_shell_uniforms(_inner_mat, core_col, edge_col, glow_col, flavor_vec, facing_vec, face_offset_3d, tail_dir_local, fin_lag_local, false)
+	_apply_shell_uniforms(_gel_mat, core_col, edge_col, glow_col, flavor_vec, facing_vec, face_offset_3d, tail_dir_local, fin_lag_local, true)
 
 	# 5. Update 2D Refractive Composite Shader Uniforms
 	if _composite_mat != null:
@@ -1631,18 +1779,56 @@ func _update_3d_rig_and_uniforms(palette: Dictionary) -> void:
 		_composite_mat.set_shader_parameter("time_sec", _time)
 
 
+func _apply_shell_uniforms(
+	mat: ShaderMaterial,
+	core_col: Color,
+	edge_col: Color,
+	glow_col: Color,
+	flavor_vec: Color,
+	facing_vec: Vector2,
+	face_offset_3d: Vector2,
+	tail_dir_local: Vector3,
+	fin_lag_local: Vector3,
+	include_face_offset: bool
+) -> void:
+	if mat == null:
+		return
+	mat.set_shader_parameter("core_color", core_col)
+	mat.set_shader_parameter("edge_color", edge_col)
+	mat.set_shader_parameter("glow_color", glow_col)
+	mat.set_shader_parameter("flavor_tint", flavor_vec)
+	mat.set_shader_parameter("core_radius", _core_radius)
+	mat.set_shader_parameter("wobble_amp", _wobble_amp)
+	mat.set_shader_parameter("fear_ripple", _fear_ripple)
+	mat.set_shader_parameter("vitality_ratio", _vitality_ratio)
+	mat.set_shader_parameter("invuln_flash", _invuln_flash)
+	mat.set_shader_parameter("time_sec", _time)
+	mat.set_shader_parameter("gulp_phase", _gulp_phase)
+	mat.set_shader_parameter("gulp_intensity", _gulp_intensity)
+	mat.set_shader_parameter("facing_dir", facing_vec)
+	mat.set_shader_parameter("tail_dir", tail_dir_local)
+	mat.set_shader_parameter("tail_strength", _tail_strength)
+	mat.set_shader_parameter("fin_lag", fin_lag_local)
+	if include_face_offset:
+		mat.set_shader_parameter("face_offset", face_offset_3d)
+	for i: int in range(LOBE_COUNT):
+		var lp: Vector2 = _lobe_pos[i]
+		mat.set_shader_parameter(LOBE_UNIFORM_NAMES[i], Vector3(lp.x, -lp.y, _lobe_rad[i]))
+
+
 func _update_3d_eyes_and_mouth(look_3d: Vector2) -> void:
 	var alarmed: bool = danger_level > 0.45
 	var is_happy: bool = happy_timer > 0.0 and not alarmed
+	var is_fragile: bool = droplets_alive <= 0 and not is_happy and not alarmed
 
 	# Expressive widening when scared or excited, smooth vertical squash on blink
 	var open_y: float = clampf(1.0 - blink_amount * 0.90, 0.10, 1.0)
 	var eye_scale_mult: float = 1.0 + danger_level * 0.11 + (0.06 if mouth_open > 0.35 else 0.0)
 	var gaze_shift := Vector3(look_3d.x * 0.024, look_3d.y * 0.020, 0.0)
 
-	# Rosy cheeks glow a touch fuller when happy
-	var cheek_boost: float = 1.15 if is_happy else (0.85 if alarmed else 1.0)
-	var cheek_sc := Vector3(0.14 * cheek_boost, 0.08 * cheek_boost, 0.04)
+	# Rosy-vermilion cheeks glow fuller when happy, soften slightly when fragile
+	var cheek_boost: float = 1.18 if is_happy else (0.82 if (alarmed or is_fragile) else 1.0)
+	var cheek_sc := Vector3(0.155 * cheek_boost, 0.088 * cheek_boost, 0.042)
 	if _left_cheek != null:
 		_left_cheek.scale = cheek_sc
 	if _right_cheek != null:
@@ -1662,6 +1848,7 @@ func _update_3d_eyes_and_mouth(look_3d: Vector2) -> void:
 		var hi1: MeshInstance3D = eye_hi1s[i]
 		var hi2: MeshInstance3D = eye_hi2s[i]
 		var happy_arc: MeshInstance3D = eye_happys[i]
+		var side_sign: float = -1.0 if i == 0 else 1.0
 
 		if is_happy:
 			ball.visible = false
@@ -1674,32 +1861,36 @@ func _update_3d_eyes_and_mouth(look_3d: Vector2) -> void:
 			ball.visible = true
 			if alarmed:
 				sclera.visible = true
-				sclera.scale = Vector3(0.95 * eye_scale_mult, 1.06 * eye_scale_mult, 0.62)
+				sclera.position = Vector3(0.0, 0.0, -0.036)
+				sclera.scale = Vector3(0.98 * eye_scale_mult, 1.08 * eye_scale_mult, 0.58)
 				ball.scale = Vector3(0.70 * eye_scale_mult, 0.74 * eye_scale_mult, 0.85)
 				ball.position = gaze_shift * 1.35 + Vector3(0.0, 0.0, 0.024)
 				iris.visible = true
-				iris.position = Vector3(0.0, -0.056, 0.108)
+				iris.position = Vector3(0.0, -0.062, 0.118)
 				hi1.visible = true
-				hi1.position = Vector3(-0.048, 0.058, 0.128)
+				hi1.position = Vector3(-0.052, 0.062, 0.138)
 				hi2.visible = false
 			else:
-				sclera.visible = false
+				# Subtle warm-cream Studio Ghibli sclera crescent peeking along outer eye rim
+				var show_details: bool = open_y > 0.28
+				sclera.visible = show_details
+				sclera.scale = Vector3(0.96 * eye_scale_mult, 1.04 * eye_scale_mult * open_y, 0.54)
+				sclera.position = Vector3(side_sign * 0.014 - gaze_shift.x * 0.28, -0.008, -0.038)
 				ball.scale = Vector3(eye_scale_mult, eye_scale_mult * open_y, 1.0)
 				ball.position = gaze_shift * 0.55
-				var show_details: bool = open_y > 0.28
 				iris.visible = show_details
 				hi1.visible = show_details
 				hi2.visible = show_details
-				iris.position = Vector3(gaze_shift.x * 0.45, -0.056 + gaze_shift.y * 0.25, 0.108)
-				hi1.position = Vector3(-0.056 + gaze_shift.x * 0.55, 0.066 + gaze_shift.y * 0.45, 0.124)
-				hi2.position = Vector3(0.056, -0.048, 0.124)
+				iris.position = Vector3(gaze_shift.x * 0.45, -0.062 + gaze_shift.y * 0.25, 0.118)
+				hi1.position = Vector3(-0.062 + gaze_shift.x * 0.55, 0.072 + gaze_shift.y * 0.45, 0.136)
+				hi2.position = Vector3(0.060, -0.052, 0.136)
 
-	# Expressive 3D Mouth & 2 Cute Rounded White Teeth
+	# Expressive 3D Mouth & 2 Cute Tiny White Fang Tips
 	if _mouth_rig == null:
 		return
 
 	if alarmed and mouth_open < 0.22:
-		# Worried little 'o' mouth with tiny peeking white teeth
+		# Worried little 'o' mouth with tiny peeking white fang tips
 		_mouth_smile.visible = false
 		_mouth_cavity.visible = true
 		_mouth_tongue.visible = true
@@ -1709,12 +1900,12 @@ func _update_3d_eyes_and_mouth(look_3d: Vector2) -> void:
 		_mouth_tongue.position = Vector3(0.0, -0.056, 0.028)
 		_tooth_left.visible = true
 		_tooth_right.visible = true
-		_tooth_left.scale = Vector3(0.76, 0.74, 0.65)
-		_tooth_right.scale = Vector3(0.76, 0.74, 0.65)
-		_tooth_left.position = Vector3(-0.032, 0.040, 0.030)
-		_tooth_right.position = Vector3(0.032, 0.040, 0.030)
+		_tooth_left.scale = Vector3(0.76, 0.78, 0.70)
+		_tooth_right.scale = Vector3(0.76, 0.78, 0.70)
+		_tooth_left.position = Vector3(-0.036, 0.044, 0.032)
+		_tooth_right.position = Vector3(0.036, 0.044, 0.032)
 	elif mouth_open > 0.16:
-		# Open chomp / joyful anticipation mouth with bright pink tongue & 2 cute white teeth
+		# Open chomp / joyful anticipation mouth with rosy tongue & 2 cute tiny white fangs
 		_mouth_smile.visible = false
 		_mouth_cavity.visible = true
 		var mw: float = lerpf(0.76, 1.32, mouth_open)
@@ -1728,28 +1919,37 @@ func _update_3d_eyes_and_mouth(look_3d: Vector2) -> void:
 
 		_tooth_left.visible = true
 		_tooth_right.visible = true
-		var t_sc: float = lerpf(0.96, 1.20, mouth_open)
-		_tooth_left.scale = Vector3(t_sc, t_sc * 1.06, 0.72)
-		_tooth_right.scale = Vector3(t_sc, t_sc * 1.06, 0.72)
-		var tooth_x: float = lerpf(0.056, 0.080, mouth_open)
-		var tooth_y: float = -0.020 * mouth_open + mh * 0.088
+		var t_sc: float = lerpf(0.95, 1.22, mouth_open)
+		_tooth_left.scale = Vector3(t_sc, t_sc * 1.08, 0.78)
+		_tooth_right.scale = Vector3(t_sc, t_sc * 1.08, 0.78)
+		var tooth_x: float = lerpf(0.064, 0.090, mouth_open)
+		var tooth_y: float = -0.020 * mouth_open + mh * 0.094
 		_tooth_left.position = Vector3(-tooth_x, tooth_y, 0.040)
 		_tooth_right.position = Vector3(tooth_x, tooth_y, 0.040)
+	elif is_fragile:
+		# Fragile opalescent vitality-0 state: tiny sweet worried pout (matching concept sheet!)
+		_mouth_smile.visible = true
+		_mouth_cavity.visible = false
+		_mouth_tongue.visible = false
+		_mouth_smile.scale = Vector3(0.74, -0.78, 1.0)
+		_mouth_smile.position = Vector3(0.0, -0.020, 0.022)
+		_tooth_left.visible = false
+		_tooth_right.visible = false
 	else:
-		# Joyful smile curve with 2 adorable peeking white teeth!
+		# Sweet warm curved Ghibli smile with 2 adorable tiny white fang tips!
 		_mouth_smile.visible = true
 		_mouth_cavity.visible = false
 		_mouth_tongue.visible = false
 		var joy_boost: float = 1.14 if is_happy else 1.0
 		_mouth_smile.scale = Vector3(joy_boost, joy_boost, 1.0)
-		_mouth_smile.position = Vector3(0.0, 0.022, 0.022)
+		_mouth_smile.position = Vector3(0.0, 0.024, 0.022)
 		_tooth_left.visible = true
 		_tooth_right.visible = true
-		var ts: float = 1.08 if is_happy else 1.02
-		_tooth_left.scale = Vector3(ts, ts, 0.72)
-		_tooth_right.scale = Vector3(ts, ts, 0.72)
-		_tooth_left.position = Vector3(-0.062 * joy_boost, -0.028, 0.028)
-		_tooth_right.position = Vector3(0.062 * joy_boost, -0.028, 0.028)
+		var ts: float = 1.06 if is_happy else 1.0
+		_tooth_left.scale = Vector3(ts, ts, 0.78)
+		_tooth_right.scale = Vector3(ts, ts, 0.78)
+		_tooth_left.position = Vector3(-0.076 * joy_boost, -0.010, 0.028)
+		_tooth_right.position = Vector3(0.076 * joy_boost, -0.010, 0.028)
 
 
 # ------------------------------------------------------------------------------

@@ -171,6 +171,10 @@ func setup(spec: Dictionary, p_scale_index: int, p_world_size: float, spawn_pos:
 	burn_flash = 0.0
 	stun_timer = 0.0
 	alpha = 0.0
+	is_edible = true
+	is_predator = false
+	proximity_ratio = 0.0
+	visible = true
 	modulate = Color.WHITE
 
 	_kind = str(spec.get("kind", "quark"))
